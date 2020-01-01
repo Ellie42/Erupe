@@ -83,6 +83,11 @@ func (s *Session) handlePacketGroup(pktGroup []byte) {
 		fallthrough
 	case network.MSG_MHF_GET_ETC_POINTS:
 		fallthrough
+	case network.MSG_MHF_GET_EQUIP_SKIN_HIST:
+		// bitmask of 3200 bytes length
+		// presumably divided by 5 sections for 5120 armour IDs covered
+		// likely starts at ID 10,000 for each section
+		fallthrough		
 	case network.MSG_MHF_READ_GUILDCARD:
 		fallthrough
 	case network.MSG_MHF_CHECK_WEEKLY_STAMP:
@@ -141,13 +146,19 @@ func (s *Session) handlePacketGroup(pktGroup []byte) {
 		fallthrough
 	case network.MSG_MHF_POST_BOOST_TIME_QUEST_RETURN:
 		fallthrough
+	case network.MSG_MHF_GET_TENROUIRAI:
+		fallthrough
 	case network.MSG_MHF_UPDATE_USE_TREND_WEAPON_LOG:
 		fallthrough
 	case network.MSG_MHF_STAMPCARD_STAMP:
 		fallthrough
 	case network.MSG_MHF_GET_SEIBATTLE:
 		fallthrough
+	case network.MSG_MHF_ADD_KOURYOU_POINT:
+		fallthrough
 	case network.MSG_MHF_GET_GUILD_WEEKLY_BONUS_ACTIVE_COUNT:
+		fallthrough
+	case network.MSG_MHF_GET_RENGOKU_BINARY:
 		fallthrough
 	case network.MSG_MHF_UPDATE_CAFEPOINT:
 		// netcafe points
@@ -234,9 +245,10 @@ func (s *Session) handlePacketGroup(pktGroup []byte) {
 	case network.MSG_SYS_GET_FILE:
 		// needs to check if scenario or quest file and then deliver the actual request file instead of a pure quest response
 		ackHandle := bf.ReadUint32()
-		_ = bf.ReadBytes(2)
-
+		bf.ReadBytes(2)
 		var fileNameHex string = string(bf.ReadBytes(7))
+		bf.ReadBytes(1)
+		
 		data, err := ioutil.ReadFile(fmt.Sprintf("file_resp/%s.bin", string(fileNameHex)))
 		if err != nil {
 			panic(err)
@@ -326,12 +338,13 @@ func (s *Session) handlePacketGroup(pktGroup []byte) {
 		s.cryptConn.SendPacket(bfw.Data())
 	case network.MSG_SYS_ENUMERATE_STAGE:
 		ackHandle := bf.ReadUint32()
-		_ = bf.ReadUint8()
+		bf.ReadUint8()
 		check := bf.ReadUint8()
 
 		if check >= 15 {
 			//returning id
 			id := bf.ReadBytes(10)
+			bf.ReadBytes(uint(check - 10))
 			
 			data, err := ioutil.ReadFile(fmt.Sprintf("bin_resp/%s_resp1.bin", opcode.String()))
 			if err != nil {
@@ -347,7 +360,7 @@ func (s *Session) handlePacketGroup(pktGroup []byte) {
 			s.cryptConn.SendPacket(bfw.Data())
 		} else {
 			//fully canned response
-		
+			bf.ReadBytes(uint(check))
 			data, err := ioutil.ReadFile(fmt.Sprintf("bin_resp/%s_resp.bin", opcode.String()))
 			if err != nil {
 				panic(err)
@@ -369,11 +382,11 @@ func (s *Session) handlePacketGroup(pktGroup []byte) {
 		var doneCheck uint16 = uint16(44);
 		for true{
 			//check for extra packets
-			_ = bf.ReadBytes(5)
+			bf.ReadBytes(5)
 			remainingDataAmount = uint(bf.ReadUint16())
 			//fmt.Printf("Remaining:   %d", remainingDataAmount)
-			_ = bf.ReadBytes(15)
-			_ = bf.ReadBytes(remainingDataAmount)
+			bf.ReadBytes(15)
+			bf.ReadBytes(remainingDataAmount)
 			doneCheck = uint16(bf.ReadUint16())
 			//fmt.Printf(" Done:%d\n", (doneCheck))
 			bf.Seek(-2,io.SeekCurrent)
@@ -390,7 +403,7 @@ func (s *Session) handlePacketGroup(pktGroup []byte) {
 		loopCount := 0;
 		// get type of packet
 		bf.Seek(0,io.SeekStart)
-		_ = bf.ReadBytes(7)
+		bf.ReadBytes(7)
 //		waitType := uint(bf.ReadUint8())
 		bf.Seek(2,io.SeekStart)
 		
@@ -405,7 +418,7 @@ func (s *Session) handlePacketGroup(pktGroup []byte) {
 				//ack
 				ackHandle := bf.ReadUint32()
 				//read until expected end of packet
-				_ = bf.ReadBytes(22)
+				bf.ReadBytes(22)
 				//done with actual MSG_SYS_WAIT_STAGE_BINARY portion
 			
 				//Deal with MSG_SYS_SET_STAGE_BINARY packet bytes
@@ -413,10 +426,10 @@ func (s *Session) handlePacketGroup(pktGroup []byte) {
 				
 				
 				//check for extra packets
-				_ = setStage.ReadBytes(5)
+				setStage.ReadBytes(5)
 				remainingDataAmount = uint(setStage.ReadUint16())
 				//fmt.Printf("Remaining:   %d", remainingDataAmount)
-				_ = setStage.ReadBytes(15)
+				setStage.ReadBytes(15)
 				remainingData := setStage.ReadBytes(remainingDataAmount)
 				//doneCheck = uint16(setStage.ReadUint16())
 				//fmt.Printf(" Done:%d\n", (doneCheck))
@@ -438,7 +451,7 @@ func (s *Session) handlePacketGroup(pktGroup []byte) {
 					bfw.WriteUint16(uint16(remainingDataAmount))
 					bfw.WriteUint32(0xF906B21A) // ceaseless character ID because bad
 					trimRemain := byteframe.NewByteFrameFromBytes(remainingData)
-					_ = trimRemain.ReadBytes(4)
+					trimRemain.ReadBytes(4)
 					remainingDataTrim := trimRemain.DataFromCurrent()
 					bfw.WriteBytes(remainingDataTrim)
 				}
@@ -477,22 +490,22 @@ func (s *Session) handlePacketGroup(pktGroup []byte) {
 		}*/
 		//fmt.Printf("\n",hex.Dump((bfw.Data())))
 	case network.MSG_SYS_CAST_BINARY:
-		_ = bf.ReadBytes(6)
+		bf.ReadBytes(6)
 		var remainingData uint = uint(bf.ReadUint16())
 		//fmt.Println(remainingData)
 		bf.ReadBytes(remainingData)
 	case network.MSG_SYS_GET_USER_BINARY:
-		_ = bf.ReadBytes(9)
+		bf.ReadBytes(9)
 	case network.MSG_SYS_SET_OBJECT_BINARY:
-		_ = bf.ReadBytes(4)
+		bf.ReadBytes(4)
 		var remainingData uint = uint(bf.ReadUint16())
 		//fmt.Println(remainingData)
 		bf.ReadBytes(remainingData)
 	case network.MSG_SYS_RECORD_LOG:
 		ackHandle := bf.ReadUint32()
-		_ = bf.ReadBytes(6)
+		bf.ReadBytes(6)
 		remainingData := bf.ReadUint16()
-		_ = bf.ReadBytes(uint(remainingData))
+		bf.ReadBytes(uint(remainingData))
 		
 		data, err := ioutil.ReadFile(fmt.Sprintf("bin_resp/%s_resp.bin", opcode.String()))
 		if err != nil {
@@ -506,10 +519,10 @@ func (s *Session) handlePacketGroup(pktGroup []byte) {
 		bfw.WriteBytes(data)
 		s.cryptConn.SendPacket(bfw.Data())	
 	case network.MSG_MHF_ADD_ACHIEVEMENT:
-		_ = bf.ReadBytes(5)
+		bf.ReadBytes(5)
 	case network.MSG_MHF_ENUMERATE_RANKING:
 		ackHandle := bf.ReadUint32()
-		_ = bf.ReadUint32()
+		bf.ReadUint32()
 		
 		data, err := ioutil.ReadFile(fmt.Sprintf("bin_resp/%s_resp.bin", opcode.String()))
 		if err != nil {
@@ -530,11 +543,11 @@ func (s *Session) handlePacketGroup(pktGroup []byte) {
 
 	case network.MSG_SYS_TERMINAL_LOG:
 		ackHandle := bf.ReadUint32()
-		_ = bf.ReadUint32()
+		bf.ReadUint32()
 		// number of 36 byte responses before end of terminal log packet
 		totalResponses := bf.ReadUint16()
-		_ = bf.ReadUint16()
-		_ = bf.ReadBytes(uint(totalResponses * 36))
+		bf.ReadUint16()
+		bf.ReadBytes(uint(totalResponses * 36))
 		
 		bfw := byteframe.NewByteFrame()
 		bfw.WriteUint16(uint16(network.MSG_SYS_ACK))
@@ -575,18 +588,72 @@ func (s *Session) handlePacketGroup(pktGroup []byte) {
 		bfw.WriteBytes(data)
 		s.cryptConn.SendPacket(bfw.Data())
 	case network.MSG_MHF_SAVE_DECO_MYSET:
-		fallthrough
+	/*
+	Save format
+	2 bytes        for start of packet content 00 01
+	2 bytes        uint16 for total save size
+	1 byte         uint8 total number of sets
+	1 byte         unk
+
+	78 bytes     total set size
+		2 bytes        uint16 set number        
+		20 bytes    string with 0x00 padding
+		56 bytes    data chunk
+	
+	Only the preset changed is actually sent back 
+	*/
+		ackHandle := bf.ReadUint32()
+		bf.ReadBytes(2)
+		remainingData := bf.ReadUint16()
+		remainingDataBytes := bf.ReadBytes(uint(remainingData))
+		data, err := ioutil.ReadFile(fmt.Sprintf("bin_resp/%s_resp_temp.bin", opcode.String()))
+		if err != nil {
+			panic(err)
+		}
+
+		go func() {
+			savew := byteframe.NewByteFrame()
+			// 00 > Length > actual data
+			savew.WriteUint8(0x00)
+			savew.WriteUint16(remainingData)
+			savew.WriteBytes(remainingDataBytes)
+			ioutil.WriteFile(fmt.Sprintf("save_files/%s.bin", opcode.String()), []byte(savew.Data()), 0644)
+		}()
+		
+
+
+		bfw := byteframe.NewByteFrame()
+		bfw.WriteUint16(uint16(network.MSG_SYS_ACK))
+		bfw.WriteUint32(ackHandle)
+		bfw.WriteBytes(data)
+		s.cryptConn.SendPacket(bfw.Data())
 	case network.MSG_MHF_SAVE_PLATE_MYSET:
+		fallthrough
+	case network.MSG_MHF_SAVE_RENGOKU_DATA:
+		fallthrough
+	case network.MSG_MHF_SAVE_MERCENARY:
+		fallthrough
+	case network.MSG_MHF_SAVE_PLATE_DATA:
 		fallthrough
 	case network.MSG_MHF_SAVE_MEZFES_DATA:
 		ackHandle := bf.ReadUint32()
-		_ = bf.ReadBytes(2)
+		bf.ReadBytes(2)
 		remainingData := bf.ReadUint16()
-		_ = bf.ReadBytes(uint(remainingData))
+		remainingDataBytes := bf.ReadBytes(uint(remainingData))
 		data, err := ioutil.ReadFile(fmt.Sprintf("bin_resp/%s_resp.bin", opcode.String()))
 		if err != nil {
 			panic(err)
 		}
+
+		go func() {
+			savew := byteframe.NewByteFrame()
+			// 00 > Length > actual data
+			savew.WriteUint8(0x00)
+			savew.WriteUint16(remainingData)
+			savew.WriteBytes(remainingDataBytes)
+			ioutil.WriteFile(fmt.Sprintf("save_files/%s.bin", opcode.String()), []byte(savew.Data()), 0644)
+		}()
+		
 
 
 		bfw := byteframe.NewByteFrame()
@@ -596,7 +663,7 @@ func (s *Session) handlePacketGroup(pktGroup []byte) {
 		s.cryptConn.SendPacket(bfw.Data())
 	case network.MSG_MHF_SAVEDATA:
 		ackHandle := bf.ReadUint32()
-		_ = bf.ReadBytes(11)
+		bf.ReadBytes(11)
 		remainingData := bf.ReadUint16()
 		remainingDataBytes := bf.ReadBytes(uint(remainingData))
 		
@@ -623,7 +690,7 @@ func (s *Session) handlePacketGroup(pktGroup []byte) {
 		s.cryptConn.SendPacket(bfw.Data())
 	case network.MSG_MHF_SAVE_SCENARIO_DATA:
 		ackHandle := bf.ReadUint32()
-		_ = bf.ReadBytes(14)
+		bf.ReadBytes(14)
 		data, err := ioutil.ReadFile(fmt.Sprintf("bin_resp/%s_resp.bin", opcode.String()))
 		if err != nil {
 			panic(err)
@@ -637,7 +704,7 @@ func (s *Session) handlePacketGroup(pktGroup []byte) {
 		s.cryptConn.SendPacket(bfw.Data())
 	case network.MSG_SYS_CREATE_OBJECT:
 		ackHandle := bf.ReadUint32()
-		_ = bf.ReadBytes(16)
+		bf.ReadBytes(16)
 		data, err := ioutil.ReadFile(fmt.Sprintf("bin_resp/%s_resp.bin", opcode.String()))
 		if err != nil {
 			panic(err)
@@ -650,13 +717,22 @@ func (s *Session) handlePacketGroup(pktGroup []byte) {
 		bfw.WriteBytes(data)
 		s.cryptConn.SendPacket(bfw.Data())
 	case network.MSG_SYS_SET_USER_BINARY:
-		_ = bf.ReadBytes(1)
+		bf.ReadBytes(1)
 		var remainingData uint = uint(bf.ReadUint16())
 		bf.ReadBytes(remainingData)
 	case network.MSG_MHF_SET_ENHANCED_MINIDATA:
 		ackHandle := bf.ReadUint32()
 		var remainingData uint = uint(bf.ReadUint16())
-		bf.ReadBytes(remainingData)
+		remainingDataBytes := bf.ReadBytes(uint(remainingData))
+		
+		go func() {
+			savew := byteframe.NewByteFrame()
+			savew.WriteUint16(uint16(remainingData))
+			savew.WriteBytes(remainingDataBytes)
+			ioutil.WriteFile(fmt.Sprintf("save_files/%s.bin", opcode.String()), []byte(savew.Data()), 0644)
+		}()
+		
+		
 		
 		data, err := ioutil.ReadFile(fmt.Sprintf("bin_resp/%s_resp.bin", opcode.String()))
 		if err != nil {
@@ -664,13 +740,12 @@ func (s *Session) handlePacketGroup(pktGroup []byte) {
 		}
 
 		bfw := byteframe.NewByteFrame()
-		bfw.WriteUint16(uint16(network.MSG_SYS_CLEANUP_OBJECT))
 		bfw.WriteUint16(uint16(network.MSG_SYS_ACK))
 		bfw.WriteUint32(ackHandle)
 		bfw.WriteBytes(data)
 		s.cryptConn.SendPacket(bfw.Data())
 	case network.MSG_MHF_GET_UD_TACTICS_FOLLOWER:
-		_ = bf.ReadBytes(4)
+		bf.ReadBytes(4)
 	case network.MSG_HEAD:
 	// actually lazily handling bad lengths which end up with null bytes instead of a real header
 		remainingData := bf.DataFromCurrent()
@@ -698,7 +773,7 @@ func (s *Session) handlePacketGroup(pktGroup []byte) {
 	case network.MSG_SYS_reserve203:
 		// isn't only ever 5 bytes
 		ackHandle := bf.ReadUint32()
-		_ = bf.ReadBytes(4)
+		bf.ReadBytes(4)
 		
 		data, err := ioutil.ReadFile(fmt.Sprintf("bin_resp/%s_resp.bin", opcode.String()))
 		if err != nil {
@@ -712,22 +787,26 @@ func (s *Session) handlePacketGroup(pktGroup []byte) {
 		bfw.WriteBytes(data)
 		s.cryptConn.SendPacket(bfw.Data())
 	case network.MSG_MHF_GET_ENHANCED_MINIDATA:
+		// actively breaks things and I can't find logic to it
+		// setting 89th byte to 12 fixed it when broken?
+		// setting 46th byte to AF or C4 also fixed it when broken?
+		
 		ackHandle := bf.ReadUint32()
-		_ = bf.ReadBytes(5)
-		data, err := ioutil.ReadFile(fmt.Sprintf("bin_resp/%s_resp.bin", opcode.String()))
+		bf.ReadBytes(5)
+		data, err := ioutil.ReadFile(fmt.Sprintf("save_files/MSG_MHF_SET_ENHANCED_MINIDATA.bin"))
 		if err != nil {
 			panic(err)
 		}
 
 		bfw := byteframe.NewByteFrame()
-		bfw.WriteUint16(uint16(network.MSG_SYS_CLEANUP_OBJECT))
 		bfw.WriteUint16(uint16(network.MSG_SYS_ACK))
 		bfw.WriteUint32(ackHandle)
+		bfw.WriteUint16(0x0100)
 		bfw.WriteBytes(data)
 		s.cryptConn.SendPacket(bfw.Data())	
 	case network.MSG_SYS_MOVE_STAGE:
 		ackHandle := bf.ReadUint32()
-		_ = bf.ReadBytes(1)
+		bf.ReadBytes(1)
 		var remainingData uint = uint(bf.ReadUint8())
 		bf.ReadBytes(remainingData)
 		
@@ -744,7 +823,7 @@ func (s *Session) handlePacketGroup(pktGroup []byte) {
 		s.cryptConn.SendPacket(bfw.Data())
 	case network.MSG_SYS_ENTER_STAGE:
 		ackHandle := bf.ReadUint32()
-		_ = bf.ReadBytes(17)
+		bf.ReadBytes(17)
 
 		data, err := ioutil.ReadFile(fmt.Sprintf("bin_resp/%s_resp.bin", opcode.String()))
 		if err != nil {
@@ -763,6 +842,7 @@ func (s *Session) handlePacketGroup(pktGroup []byte) {
 		ackHandle := bf.ReadUint32()
 		bf.ReadBytes(11)
 		var respType uint = uint(bf.ReadUint8())
+		bf.ReadBytes(16)
 
 		fmt.Printf("MSG_MHF_GET_EARTH_VALUE: %d\n", respType)
 
@@ -780,8 +860,7 @@ func (s *Session) handlePacketGroup(pktGroup []byte) {
 		ackHandle := bf.ReadUint32()
 		bf.ReadBytes(3)
 		var respType uint = uint(bf.ReadUint8())
-
-		fmt.Printf("MSG_MHF_GET_TOWER_INFO: %d\n", respType)
+		bf.ReadBytes(8)		
 
 		data, err := ioutil.ReadFile(fmt.Sprintf("bin_resp/%s_resp_0%d.bin", opcode.String(), respType))
 		if err != nil {
@@ -795,7 +874,7 @@ func (s *Session) handlePacketGroup(pktGroup []byte) {
 		s.cryptConn.SendPacket(bfw.Data())
 	case network.MSG_MHF_INFO_FESTA:
 		ackHandle := bf.ReadUint32()
-		_ = bf.ReadUint32()
+		bf.ReadUint32()
 
 		data, err := ioutil.ReadFile(fmt.Sprintf("bin_resp/%s_resp.bin", opcode.String()))
 		if err != nil {
@@ -809,7 +888,7 @@ func (s *Session) handlePacketGroup(pktGroup []byte) {
 		s.cryptConn.SendPacket(bfw.Data())
 	case network.MSG_MHF_INFO_GUILD:
 		ackHandle := bf.ReadUint32()
-		_ = bf.ReadUint32()
+		bf.ReadUint32()
 
 		data, err := ioutil.ReadFile(fmt.Sprintf("bin_resp/%s_resp.bin", opcode.String()))
 		if err != nil {
@@ -823,7 +902,7 @@ func (s *Session) handlePacketGroup(pktGroup []byte) {
 		s.cryptConn.SendPacket(bfw.Data())
 	case network.MSG_MHF_ENUMERATE_GUILD_MEMBER:
 		ackHandle := bf.ReadUint32()
-		_ = bf.ReadUint32()
+		bf.ReadUint32()
 
 		data, err := ioutil.ReadFile(fmt.Sprintf("bin_resp/%s_resp.bin", opcode.String()))
 		if err != nil {
@@ -835,9 +914,24 @@ func (s *Session) handlePacketGroup(pktGroup []byte) {
 		bfw.WriteUint32(ackHandle)
 		bfw.WriteBytes(data)
 		s.cryptConn.SendPacket(bfw.Data())
+	case network.MSG_MHF_UPDATE_EQUIP_SKIN_HIST:
+		ackHandle := bf.ReadUint32()
+		// unlock status + skin internal ID?
+		bf.ReadBytes(3)
+
+		data, err := ioutil.ReadFile(fmt.Sprintf("bin_resp/%s_resp.bin", opcode.String()))
+		if err != nil {
+			panic(err)
+		}
+	
+		bfw := byteframe.NewByteFrame()
+		bfw.WriteUint16(uint16(network.MSG_SYS_ACK))
+		bfw.WriteUint32(ackHandle)
+		bfw.WriteBytes(data)
+		s.cryptConn.SendPacket(bfw.Data())
 	case network.MSG_MHF_STATE_FESTA_G:
 		ackHandle := bf.ReadUint32()
-		_ = bf.ReadBytes(10)
+		bf.ReadBytes(10)
 
 		data, err := ioutil.ReadFile(fmt.Sprintf("bin_resp/%s_resp.bin", opcode.String()))
 		if err != nil {
@@ -926,9 +1020,9 @@ func (s *Session) handlePacketGroup(pktGroup []byte) {
 		}
 	case network.MSG_MHF_ENUMERATE_QUEST:
 		ackHandle := bf.ReadUint32()
-		_ = bf.ReadBytes(5)
+		bf.ReadBytes(5)
 		questList := bf.ReadUint8()
-		_ = bf.ReadBytes(1)
+		bf.ReadBytes(1)
 		if questList == 0 {
 			questListCount = 0
 		} else if (questList <= 44)  {
@@ -952,7 +1046,7 @@ func (s *Session) handlePacketGroup(pktGroup []byte) {
 		bfw.WriteBytes(data)
 		s.cryptConn.SendPacket(bfw.Data())
 	case network.MSG_SYS_POSITION_OBJECT:
-		_ = bf.ReadBytes(16)
+		bf.ReadBytes(16)
 	default:
 		// Get the packet parser and handler for this opcode.
 		mhfPkt := mhfpacket.FromOpcode(opcode)
@@ -972,7 +1066,7 @@ func (s *Session) handlePacketGroup(pktGroup []byte) {
 	remainingData := bf.DataFromCurrent()
 	readCheck := len(bf.Data()) - len(remainingData)
 	
-	if len(remainingData) >= 2 && (opcode == network.MSG_SYS_MOVE_STAGE || opcode == network.MSG_MHF_SAVE_PLATE_MYSET || opcode == network.MSG_MHF_SAVE_OTOMO_AIROU || opcode == network.MSG_SYS_SET_OBJECT_BINARY || opcode == network.MSG_MHF_SAVE_DECO_MYSET || opcode == network.MSG_MHF_SAVE_MEZFES_DATA || opcode == network.MSG_SYS_GET_USER_BINARY || opcode == network.MSG_MHF_SAVEDATA || opcode == network.MSG_MHF_ADD_ACHIEVEMENT || opcode == network.MSG_SYS_RECORD_LOG || opcode == network.MSG_SYS_POSITION_OBJECT || opcode == network.MSG_SYS_TERMINAL_LOG || opcode == network.MSG_SYS_CREATE_OBJECT || opcode == network.MSG_SYS_SET_STAGE_BINARY || opcode == network.MSG_MHF_SET_ENHANCED_MINIDATA || opcode == network.MSG_SYS_WAIT_STAGE_BINARY || opcode == network.MSG_MHF_SAVE_PARTNER || opcode == network.MSG_MHF_SAVE_SCENARIO_DATA || opcode == network.MSG_MHF_GET_KEEP_LOGIN_BOOST_STATUS || opcode == network.MSG_SYS_TIME || opcode == network.MSG_SYS_reserve203 /*|| opcode == network.MSG_HEAD*/ ||opcode == network.MSG_MHF_ENUMERATE_QUEST || opcode == network.MSG_MHF_GET_UD_TACTICS_FOLLOWER || opcode == network.MSG_MHF_INFO_FESTA || opcode == network.MSG_SYS_EXTEND_THRESHOLD || opcode == network.MSG_MHF_STATE_FESTA_G || opcode == network.MSG_SYS_CAST_BINARY || opcode == network.MSG_SYS_ENTER_STAGE || opcode == network.MSG_SYS_SET_USER_BINARY) {
+	if len(remainingData) >= 2 && (opcode == network.MSG_MHF_SAVE_MERCENARY || opcode == network.MSG_SYS_ENUMERATE_STAGE || opcode == network.MSG_MHF_SAVE_RENGOKU_DATA || opcode == network.MSG_MHF_SAVE_FAVORITE_QUEST || opcode == network.MSG_SYS_MOVE_STAGE || opcode == network.MSG_MHF_SAVE_PLATE_MYSET || opcode == network.MSG_MHF_SAVE_OTOMO_AIROU || opcode == network.MSG_SYS_SET_OBJECT_BINARY || opcode == network.MSG_MHF_SAVE_DECO_MYSET || opcode == network.MSG_MHF_SAVE_MEZFES_DATA || opcode == network.MSG_SYS_GET_USER_BINARY || opcode == network.MSG_MHF_SAVEDATA || opcode == network.MSG_MHF_ADD_ACHIEVEMENT || opcode == network.MSG_SYS_RECORD_LOG || opcode == network.MSG_SYS_POSITION_OBJECT || opcode == network.MSG_SYS_TERMINAL_LOG || opcode == network.MSG_SYS_CREATE_OBJECT || opcode == network.MSG_SYS_SET_STAGE_BINARY || opcode == network.MSG_MHF_SET_ENHANCED_MINIDATA || opcode == network.MSG_SYS_WAIT_STAGE_BINARY || opcode == network.MSG_MHF_SAVE_PARTNER || opcode == network.MSG_MHF_SAVE_SCENARIO_DATA || opcode == network.MSG_MHF_GET_KEEP_LOGIN_BOOST_STATUS || opcode == network.MSG_SYS_TIME || opcode == network.MSG_SYS_reserve203 /*|| opcode == network.MSG_HEAD*/ ||opcode == network.MSG_MHF_ENUMERATE_QUEST || opcode == network.MSG_MHF_GET_UD_TACTICS_FOLLOWER || opcode == network.MSG_MHF_INFO_FESTA || opcode == network.MSG_SYS_EXTEND_THRESHOLD || opcode == network.MSG_MHF_STATE_FESTA_G || opcode == network.MSG_SYS_CAST_BINARY || opcode == network.MSG_SYS_ENTER_STAGE || opcode == network.MSG_SYS_SET_USER_BINARY) {
 			s.handlePacketGroup(remainingData)
 	} else if len(remainingData) >= 2 && (readCheck > 6) {
 		fmt.Println("Remaining data catch all on ", opcode)
