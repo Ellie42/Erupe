@@ -4,6 +4,7 @@ import (
 	"github.com/Andoryuuta/Erupe/network"
 	"github.com/Andoryuuta/Erupe/network/mhfpacket"
 	"github.com/Andoryuuta/byteframe"
+	"time"
 )
 
 func handleMsgHead(s *Session, p mhfpacket.MHFPacket) {}
@@ -52,7 +53,9 @@ func handleMsgSysLogin(s *Session, p mhfpacket.MHFPacket) {
 	bf := byteframe.NewByteFrame()
 	bf.WriteUint16(uint16(network.MSG_SYS_ACK))
 	bf.WriteUint32(pkt.AckHandle)
-	bf.WriteUint64(0x000000005E00B9C2) // Timestamp?
+	bf.WriteUint32(0x00000000)
+	bf.WriteUint32(uint32(time.Now().Unix()))
+	bf.WriteUint16(0x0010)
 	s.cryptConn.SendPacket(bf.Data())
 }
 
@@ -71,6 +74,7 @@ func handleMsgSysPing(s *Session, p mhfpacket.MHFPacket) {
 		Unk1:      0,
 	}
 	ack.Build(bf)
+	bf.WriteUint16(0x0010)
 	s.cryptConn.SendPacket(bf.Data())
 }
 
@@ -79,15 +83,16 @@ func handleMsgSysCastBinary(s *Session, p mhfpacket.MHFPacket) {}
 func handleMsgSysHideClient(s *Session, p mhfpacket.MHFPacket) {}
 
 func handleMsgSysTime(s *Session, p mhfpacket.MHFPacket) {
-	pkt := p.(*mhfpacket.MsgSysTime)
+	//pkt := p.(*mhfpacket.MsgSysTime)
 
 	bf := byteframe.NewByteFrame()
 	bf.WriteUint16(uint16(network.MSG_SYS_TIME))
 	resp := mhfpacket.MsgSysTime{
-		Unk0:      pkt.Unk0,
-		Timestamp: pkt.Timestamp,
+		Unk0:      0,
+		Timestamp: uint32(time.Now().Unix()),
 	}
 	resp.Build(bf)
+	bf.WriteUint16(0x0010)
 	s.cryptConn.SendPacket(bf.Data())
 }
 
@@ -862,6 +867,7 @@ func handleMsgMhfGetRengokuRankingRank(s *Session, p mhfpacket.MHFPacket) {
 	bf.WriteUint16(uint16(network.MSG_SYS_ACK))
 	bf.WriteUint32(pkt.AckHandle)
 	bf.WriteBytes([]byte{0x01, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
+	bf.WriteUint16(0x0010)
 	s.cryptConn.SendPacket(bf.Data())
 }
 

@@ -2,6 +2,8 @@ www/tw/
 www/jp/
 
 bin_resp/
+file_resp/
+save_files/
 custom_entrance_server_resp.bin
 dec_bin8_data_dump.bin
 entrance_resp_bin8_encrypted.bin
