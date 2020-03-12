@@ -2542,7 +2542,10 @@ func handleMsgMhfSetRejectGuildScout(s *Session, p mhfpacket.MHFPacket) {}
 
 func handleMsgMhfGetCaAchievementHist(s *Session, p mhfpacket.MHFPacket) {}
 
-func handleMsgMhfSetCaAchievementHist(s *Session, p mhfpacket.MHFPacket) {}
+func handleMsgMhfSetCaAchievementHist(s *Session, p mhfpacket.MHFPacket) {
+				pkt := p.(*mhfpacket.MsgMhfSetCaAchievementHist)
+				s.QueueAck(pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
+}
 
 func handleMsgMhfGetKeepLoginBoostStatus(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfGetKeepLoginBoostStatus)
