@@ -1096,7 +1096,7 @@ func handleMsgMhfSavedata(s *Session, p mhfpacket.MHFPacket) {
 
 	// Var to hold the decompressed savedata for updating the launcher response fields.
 	var decompressedData []byte
-
+	fmt.Printf("\n%d allocmemsize",pkt.AllocMemSize)
 	if pkt.SaveType == 1 {
 		// Diff-based update.
 
@@ -1108,14 +1108,20 @@ func handleMsgMhfSavedata(s *Session, p mhfpacket.MHFPacket) {
 		}
 
 		// Decompress
-		s.logger.Info("Decompressing...")
+		s.logger.Info("\nDecompressing...")
 		data, err = nullcomp.Decompress(data)
 		if err != nil {
 			s.logger.Fatal("Failed to decompress savedata from db", zap.Error(err))
 		}
 
+		// diffs themselves are also potentially compressed
+		diff, err := nullcomp.Decompress(pkt.RawDataPayload)
+		if err != nil {
+			s.logger.Fatal("Failed to decompress diff", zap.Error(err))
+		}
+
 		// Perform diff.
-		data = deltacomp.ApplyDataDiff(pkt.RawDataPayload, data)
+		data = deltacomp.ApplyDataDiff(diff, data)
 
 		// Make a copy for updating the launcher fields.
 		decompressedData = make([]byte, len(data))
