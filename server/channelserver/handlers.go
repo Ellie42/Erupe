@@ -884,11 +884,15 @@ func handleMsgSysOpenMutex(s *Session, p mhfpacket.MHFPacket) {}
 
 func handleMsgSysCloseMutex(s *Session, p mhfpacket.MHFPacket) {}
 
-func handleMsgSysCreateSemaphore(s *Session, p mhfpacket.MHFPacket) {}
+func handleMsgSysCreateSemaphore(s *Session, p mhfpacket.MHFPacket) {
+	// All of the semaphore stuff very likely needs something like stage handling implemented
+	pkt := p.(*mhfpacket.MsgSysCreateSemaphore)
+	s.QueueAck(pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x00, 0x0d})
+}
 
 func handleMsgSysCreateAcquireSemaphore(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgSysCreateAcquireSemaphore)
-	doSizedAckResp(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x0F, 0x00, 0x1D})
+	s.QueueAck(pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x0F, 0x00, 0x1D})
 }
 
 func handleMsgSysDeleteSemaphore(s *Session, p mhfpacket.MHFPacket) {}
@@ -1219,10 +1223,18 @@ func handleMsgMhfSaveFavoriteQuest(s *Session, p mhfpacket.MHFPacket) {
 
 func handleMsgMhfRegisterEvent(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfRegisterEvent)
-	s.QueueAck(pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
+	bf := byteframe.NewByteFrame()
+	bf.WriteUint32(0)
+	bf.WriteUint8(pkt.Unk2)
+	bf.WriteUint8(pkt.Unk4)
+	bf.WriteUint16(0x1142)
+	s.QueueAck(pkt.AckHandle, bf.Data())
 }
 
-func handleMsgMhfReleaseEvent(s *Session, p mhfpacket.MHFPacket) {}
+func handleMsgMhfReleaseEvent(s *Session, p mhfpacket.MHFPacket) {
+	pkt := p.(*mhfpacket.MsgMhfReleaseEvent)
+	s.QueueAck(pkt.AckHandle, []byte{0x00, 0x41, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
+}
 
 func handleMsgMhfTransitMessage(s *Session, p mhfpacket.MHFPacket) {}
 
