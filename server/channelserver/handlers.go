@@ -2607,7 +2607,7 @@ func handleMsgMhfSetCaAchievementHist(s *Session, p mhfpacket.MHFPacket) {
 func handleMsgMhfGetKeepLoginBoostStatus(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfGetKeepLoginBoostStatus)
 
-	var t = time.Now().In(time.FixedZone("UTC+9", 9*60*60))
+	//var t = time.Now().In(time.FixedZone("UTC+9", 9*60*60)) // uncomment to enable permanently
 	// Directly interacts with MsgMhfUseKeepLoginBoost
 	// TODO: make these states persistent on a per character basis
 	loginBoostStatus := [5]struct {
@@ -2618,7 +2618,7 @@ func handleMsgMhfGetKeepLoginBoostStatus(s *Session, p mhfpacket.MHFPacket) {
 			WeeekReq: 1, // weeks needed to unlock
 			WeekCount: 1, // weeks passed
 			Available: 1, // available
-			Expiration: 0, //uint32(t.Add(120 * time.Minute).Unix()), // uncomment to enable permanently 
+			Expiration: 0, //uint32(t.Add(120 * time.Minute).Unix()), // uncomment to enable permanently
 		},
 		{
 			WeeekReq: 2,
