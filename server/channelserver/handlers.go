@@ -970,6 +970,16 @@ func handleMsgSysPositionObject(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgSysPositionObject)
 	fmt.Printf("Moved object %v to (%f,%f,%f)\n", pkt.ObjID, pkt.X, pkt.Y, pkt.Z)
 
+	s.stage.Lock()
+	for index, object := range s.stage.objects {
+		if index == pkt.ObjID {
+			object.x = pkt.X
+			object.y = pkt.Y
+			object.z = pkt.Z
+		}
+	}
+	s.stage.Unlock()
+
 	// One of the few packets we can just re-broadcast directly.
 	s.stage.BroadcastMHF(pkt, s)
 }
