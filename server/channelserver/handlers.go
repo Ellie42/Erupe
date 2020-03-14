@@ -1316,8 +1316,8 @@ func handleMsgMhfCreateGuild(s *Session, p mhfpacket.MHFPacket) {
 	}
 
 	guildResult, err := transaction.Query(
-		"INSERT INTO guilds (name) VALUES ($1) RETURNING id",
-		stripNullTerminator(pkt.Name),
+		"INSERT INTO guilds (name, leader_id) VALUES ($1, $2) RETURNING id",
+		stripNullTerminator(pkt.Name), s.charID,
 	)
 
 	if err != nil {
@@ -1353,8 +1353,8 @@ func handleMsgMhfCreateGuild(s *Session, p mhfpacket.MHFPacket) {
 	}
 
 	_, err = transaction.Exec(`
-		INSERT INTO guild_characters (guild_id, character_id, is_leader)
-		VALUES ($1, $2, true)
+		INSERT INTO guild_characters (guild_id, character_id)
+		VALUES ($1, $2)
 	`, guildId, s.charID)
 
 	if err != nil {
@@ -1409,12 +1409,90 @@ func handleMsgMhfOperateGuildMember(s *Session, p mhfpacket.MHFPacket) {}
 func handleMsgMhfInfoGuild(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfInfoGuild)
 
-	// REALLY large/complex format... stubbing it out here for simplicity.
-	resp := byteframe.NewByteFrame()
-	resp.WriteUint32(0) // Count
-	resp.WriteUint8(0)  // Unk, read if count == 0.
+	if guild, err := GetGuildByCharacterId(s, s.charID); err != nil && guild != nil {
+		characterGuildData, err := GetCharacterGuildData(s, s.charID)
 
-	doSizedAckResp(s, pkt.AckHandle, resp.Data())
+		if err != nil {
+			return
+		}
+
+		bfWrapper := byteframe.NewByteFrame()
+
+		bf := byteframe.NewByteFrame()
+
+		bf.WriteUint32(uint32(guild.ID))
+		bf.WriteUint32(s.charID) // Not 100% which character this ID is supposed to belong to
+		bf.WriteUint16(0x0)      // Guild festival ranking (I think)
+		bf.WriteUint16(uint16(guild.MemberCount))
+
+		// Unk appears to be static
+		bf.WriteBytes([]byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
+
+		bf.WriteUint16(0x01) // Unk appears to be static
+
+		bf.WriteUint32(guild.CreatedAt)
+		bf.WriteUint32(characterGuildData.JoinedAt)
+		bf.WriteUint8(uint8(len(guild.Name)))
+		bf.WriteUint8(uint8(len(guild.Message)))
+		bf.WriteUint8(uint8(5)) // Length of unknown string below
+		bf.WriteUint8(uint8(len(guild.Leader.Name)))
+		bf.WriteBytes([]byte(guild.Name))
+		bf.WriteBytes([]byte(guild.Message))
+		bf.WriteBytes([]byte{0xFF, 0x00, 0x00, 0x00, 0x00}) // Unk string
+		bf.WriteBytes([]byte(guild.Leader.Name))
+		bf.WriteBytes([]byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x02, 0x00, 0x00, 0x00, 0x00}) // Unk
+
+		// Here there are always 3 null terminated names, not sure what they relate to though
+		// Having all three as null bytes is perfectly valid
+		for i := 0; i < 3; i++ {
+			bf.WriteUint8(0x1) // Name Length - 1 minimum due to null byte
+			bf.WriteUint8(0x0) // Name string
+		}
+
+		// Unk
+		bf.WriteBytes([]byte{
+			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1E, 0x00,
+			0x00, 0xD6, 0xD8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		})
+
+		// Unk-ish Indicates an alliance with 0x0a
+		// When using 0x1b there is a lot more data expected after
+		// 0x0 = no alliance
+		bf.WriteUint8(0x0)
+
+		// TODO add alliance parts here
+
+		bf.WriteBytes([]byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
+
+		infoMessageData := bf.Data()
+
+		bfWrapper.WriteUint8(0x0)                           // Unk
+		bfWrapper.WriteUint8(0x0)                           // Unk
+		bfWrapper.WriteUint16(uint16(len(infoMessageData))) // Message Length
+		bfWrapper.WriteBytes(infoMessageData)
+
+		ack := &mhfpacket.MsgSysAck{
+			AckHandle: pkt.AckHandle,
+			AckData:   bfWrapper.Data(),
+		}
+
+		ackMessage := byteframe.NewByteFrame()
+		ackMessage.WriteUint16(uint16(pkt.Opcode()))
+
+		// Build the packet onto the byteframe.
+		ack.Build(ackMessage)
+
+		hex.Dump(ackMessage.Data())
+
+		//s.QueueSendMHF(ack)
+	} else {
+		// REALLY large/complex format... stubbing it out here for simplicity.
+		resp := byteframe.NewByteFrame()
+		resp.WriteUint32(0) // Count
+		resp.WriteUint8(0)  // Unk, read if count == 0.
+
+		doSizedAckResp(s, pkt.AckHandle, resp.Data())
+	}
 }
 
 func handleMsgMhfEnumerateGuild(s *Session, p mhfpacket.MHFPacket) {}
