@@ -3,6 +3,7 @@ package channelserver
 import (
 	"bytes"
 	"crypto/rand"
+	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
@@ -1303,7 +1304,103 @@ func handleMsgMhfCaravanRanking(s *Session, p mhfpacket.MHFPacket) {}
 
 func handleMsgMhfCaravanMyRank(s *Session, p mhfpacket.MHFPacket) {}
 
-func handleMsgMhfCreateGuild(s *Session, p mhfpacket.MHFPacket) {}
+func handleMsgMhfCreateGuild(s *Session, p mhfpacket.MHFPacket) {
+	pkt := p.(*mhfpacket.MsgMhfCreateGuild)
+
+	transaction, err := s.server.db.Begin()
+
+	if err != nil {
+		s.logger.Error("failed to start db transaction")
+		sendFailedToCreateGuildMessage(pkt, s)
+		return
+	}
+
+	guildResult, err := transaction.Query(
+		"INSERT INTO guilds (name) VALUES ($1) RETURNING id",
+		stripNullTerminator(pkt.Name),
+	)
+
+	if err != nil {
+		s.logger.Error("failed to create guild")
+		rollbackTransaction(err, transaction, s)
+		sendFailedToCreateGuildMessage(pkt, s)
+
+		return
+	}
+
+	var guildId int32
+
+	guildResult.Next()
+
+	err = guildResult.Scan(&guildId)
+
+	if err != nil {
+		s.logger.Error("failed to retrieve guild ID")
+		rollbackTransaction(err, transaction, s)
+		sendFailedToCreateGuildMessage(pkt, s)
+
+		return
+	}
+
+	err = guildResult.Close()
+
+	if err != nil {
+		s.logger.Error("failed to finalise query")
+		rollbackTransaction(err, transaction, s)
+		sendFailedToCreateGuildMessage(pkt, s)
+
+		return
+	}
+
+	_, err = transaction.Exec(`
+		INSERT INTO guild_characters (guild_id, character_id, is_leader)
+		VALUES ($1, $2, true)
+	`, guildId, s.charID)
+
+	if err != nil {
+		s.logger.Error("failed to add character to guild")
+		rollbackTransaction(err, transaction, s)
+		sendFailedToCreateGuildMessage(pkt, s)
+
+		return
+	}
+
+	err = transaction.Commit()
+
+	if err != nil {
+		s.logger.Error("failed to commit guild creation")
+		sendFailedToCreateGuildMessage(pkt, s)
+		return
+	}
+
+	bf := byteframe.NewByteFrameFromBytes([]byte{0x00, 0x00, 0x00, 0x00})
+
+	bf.WriteUint32(uint32(guildId))
+
+	ack := &mhfpacket.MsgSysAck{AckHandle: pkt.AckHandle, AckData: bf.Data()}
+
+	s.QueueSendMHF(ack)
+}
+
+func sendFailedToCreateGuildMessage(pkt *mhfpacket.MsgMhfCreateGuild, s *Session) {
+	bf := byteframe.NewByteFrameFromBytes([]byte{0x00, 0x00, 0x00, 0x00})
+
+	// No reasoning behind these values other than they cause a 'failed to create'
+	// style message, it's better than nothing for now.
+	bf.WriteUint32(0x01010101)
+
+	ack := &mhfpacket.MsgSysAck{AckHandle: pkt.AckHandle, AckData: bf.Data()}
+
+	s.QueueSendMHF(ack)
+}
+
+func rollbackTransaction(err error, transaction *sql.Tx, s *Session) {
+	err = transaction.Rollback()
+
+	if err != nil {
+		s.logger.Error("failed to rollback transaction")
+	}
+}
 
 func handleMsgMhfOperateGuild(s *Session, p mhfpacket.MHFPacket) {}
 
