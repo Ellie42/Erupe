@@ -646,7 +646,12 @@ func handleMsgSysReserveStage(s *Session, p mhfpacket.MHFPacket) {
 	stage.Lock()
 	defer stage.Unlock()
 
-	if uint16(len(stage.reservedClientSlots)) < stage.maxPlayers {
+	// Quick fix to allow readying up while party is full, more investigation needed
+	// Reserve stage is also sent when a player is ready, probably need to parse the
+	// request a little more thoroughly.
+	if _, exists := stage.reservedClientSlots[s.charID]; exists {
+		s.QueueAck(pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
+	} else if uint16(len(stage.reservedClientSlots)) < stage.maxPlayers {
 		// Add the charID to the stage's reservation map
 		stage.reservedClientSlots[s.charID] = nil
 
@@ -884,11 +889,15 @@ func handleMsgSysOpenMutex(s *Session, p mhfpacket.MHFPacket) {}
 
 func handleMsgSysCloseMutex(s *Session, p mhfpacket.MHFPacket) {}
 
-func handleMsgSysCreateSemaphore(s *Session, p mhfpacket.MHFPacket) {}
+func handleMsgSysCreateSemaphore(s *Session, p mhfpacket.MHFPacket) {
+	// All of the semaphore stuff very likely needs something like stage handling implemented
+	pkt := p.(*mhfpacket.MsgSysCreateSemaphore)
+	s.QueueAck(pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x00, 0x0d})
+}
 
 func handleMsgSysCreateAcquireSemaphore(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgSysCreateAcquireSemaphore)
-	doSizedAckResp(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x0F, 0x00, 0x1D})
+	s.QueueAck(pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x0F, 0x00, 0x1D})
 }
 
 func handleMsgSysDeleteSemaphore(s *Session, p mhfpacket.MHFPacket) {}
@@ -906,9 +915,11 @@ func handleMsgSysCheckSemaphore(s *Session, p mhfpacket.MHFPacket) {}
 func handleMsgSysOperateRegister(s *Session, p mhfpacket.MHFPacket) {}
 
 func handleMsgSysLoadRegister(s *Session, p mhfpacket.MHFPacket) {
-		pkt := p.(*mhfpacket.MsgSysLoadRegister)
-		data, _ := hex.DecodeString("000C000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")
-		doSizedAckResp(s, pkt.AckHandle, data)
+	pkt := p.(*mhfpacket.MsgSysLoadRegister)
+	// ravi response
+	//data, _ := hex.DecodeString("000C000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")
+	data, _ := hex.DecodeString("01000076001d0001b2c4000227d1000221040000a959000000000000000000000000000000000000000000532d1c0010ee8e001fe0010007f463000000000017e53e00072e250053937a0000194a00002d5a000000000000000000004eb300004cd700000000000008a90000be400001bb16000005dd00000014")
+	doSizedAckResp(s, pkt.AckHandle, data)
 }
 
 func handleMsgSysNotifyRegister(s *Session, p mhfpacket.MHFPacket) {}
@@ -1087,7 +1098,7 @@ func handleMsgMhfSavedata(s *Session, p mhfpacket.MHFPacket) {
 
 	// Var to hold the decompressed savedata for updating the launcher response fields.
 	var decompressedData []byte
-
+	fmt.Printf("\n%d allocmemsize",pkt.AllocMemSize)
 	if pkt.SaveType == 1 {
 		// Diff-based update.
 
@@ -1099,14 +1110,20 @@ func handleMsgMhfSavedata(s *Session, p mhfpacket.MHFPacket) {
 		}
 
 		// Decompress
-		s.logger.Info("Decompressing...")
+		s.logger.Info("\nDecompressing...")
 		data, err = nullcomp.Decompress(data)
 		if err != nil {
 			s.logger.Fatal("Failed to decompress savedata from db", zap.Error(err))
 		}
 
+		// diffs themselves are also potentially compressed
+		diff, err := nullcomp.Decompress(pkt.RawDataPayload)
+		if err != nil {
+			s.logger.Fatal("Failed to decompress diff", zap.Error(err))
+		}
+
 		// Perform diff.
-		data = deltacomp.ApplyDataDiff(pkt.RawDataPayload, data)
+		data = deltacomp.ApplyDataDiff(diff, data)
 
 		// Make a copy for updating the launcher fields.
 		decompressedData = make([]byte, len(data))
@@ -1187,13 +1204,64 @@ func handleMsgMhfListMember(s *Session, p mhfpacket.MHFPacket) {
 
 func handleMsgMhfOprMember(s *Session, p mhfpacket.MHFPacket) {}
 
-func handleMsgMhfEnumerateDistItem(s *Session, p mhfpacket.MHFPacket) {}
+func handleMsgMhfEnumerateDistItem(s *Session, p mhfpacket.MHFPacket) {
+	pkt := p.(*mhfpacket.MsgMhfEnumerateDistItem)
+	// uint16 number of entries
+	// 446 entry block
+	// uint32 claimID
+	// 00 00 00 00 00 00
+	// uint16 timesClaimable
+	// 00 00 00 00 FF FF FF FF FF FF FF FF FF FF FF FF 00 00 00 00 00 00 00 00 00
+	// uint8 stringLength
+	// string nullTermString
+	data, _ := hex.DecodeString("0001000000FF0000000000000000002000000000FFFFFFFFFFFFFFFFFFFFFFFF0000000000000000002F323020426F7820457870616E73696F6E73000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")
+	doSizedAckResp(s, pkt.AckHandle, data)
 
-func handleMsgMhfApplyDistItem(s *Session, p mhfpacket.MHFPacket) {}
+}
 
-func handleMsgMhfAcquireDistItem(s *Session, p mhfpacket.MHFPacket) {}
+func handleMsgMhfApplyDistItem(s *Session, p mhfpacket.MHFPacket) {
+	// 0052a49100011f00000000000000010274db99 equipment box page
+	// 0052a48f00011e0000000000000001195dda5c item box page
+	// 0052a49400010700003ae30000000132d3a4d6 Item ID 3AE3
+	// HEADER:
+	// int32: Unique item hash for tracking server side purchases? Swapping across items didn't change image/cost/function etc.
+	// int16: Number of distributed item types
+	// ITEM ENTRY
+	// int8:  distribution type
+	// 00 = legs, 01 = Head, 02 = Chest, 03 = Arms, 04 = Waist, 05 = Melee, 06 = Ranged, 07 = Item, 08 == furniture
+	// ids are wrong shop displays in random order
+	// 09 = Nothing, 10 = Null Point, 11 = Festi Point, 12 = Zeny, 13 = Pugi Outfit, 14 = Null Points, 15 = My Tore points
+	// 16 = Gook Costumes, 17 = Image Change Points, 18 = N Points, 19 = Gacha Coins, 20 = Trial Gacha Coins, 21 = Frontier points
+	// 22 = Guild Points, 23 = RP?, 30 = Item Box Page, 31 = Equipment Box Page
+	// int16: Unk
+	// int16: Item when type 07
+	// int16: Unk
+	// int16: Number delivered in batch
+	// int32: Unique item hash for tracking server side purchases? Swapping across items didn't change image/cost/function etc.
+	pkt := p.(*mhfpacket.MsgMhfApplyDistItem)
+	if(pkt.RequestType == 0){
+		doSizedAckResp(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
+	} else if(pkt.RequestType == 0x000000FF){
+		// box expansions
+		data, _ := hex.DecodeString("0052a49100021f00000000000000140274db991e00000000000000140274db99")
+		doSizedAckResp(s, pkt.AckHandle, data)
+	} else {
+		doSizedAckResp(s, pkt.AckHandle,  []byte{0x00, 0x00, 0x00, 0x00})
+	}
+}
 
-func handleMsgMhfGetDistDescription(s *Session, p mhfpacket.MHFPacket) {}
+func handleMsgMhfAcquireDistItem(s *Session, p mhfpacket.MHFPacket) {
+	pkt := p.(*mhfpacket.MsgMhfAcquireDistItem)
+	s.QueueAck(pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
+}
+
+func handleMsgMhfGetDistDescription(s *Session, p mhfpacket.MHFPacket) {
+	pkt := p.(*mhfpacket.MsgMhfGetDistDescription)
+	// string for the associated message
+	data, _ := hex.DecodeString("007E43303547656E65726963204974656D20436C61696D204D6573736167657E4330300D0A596F752067657420736F6D65206B696E64206F66206974656D732070726F6261626C792E00000100")
+	//data, _ := hex.DecodeString("0075b750c1c2b17ac1cab652a1757e433035b8cbb3c6bd63c258b169aa41b0c87e433030a1760a0aa175b8cbb3c6bd63c258b169aa41b0c8a176a843c1caa44a31a6b8a141a569c258b169a2b0add30aa8a4a6e2aabaa175b8cbb3c6bd63a176a2b0adb6a143b3cca668a569c258b169a2b4adb6a14300000100")
+	doSizedAckResp(s, pkt.AckHandle, data)
+}
 
 func handleMsgMhfSendMail(s *Session, p mhfpacket.MHFPacket) {}
 
@@ -1219,10 +1287,18 @@ func handleMsgMhfSaveFavoriteQuest(s *Session, p mhfpacket.MHFPacket) {
 
 func handleMsgMhfRegisterEvent(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfRegisterEvent)
-	s.QueueAck(pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
+	bf := byteframe.NewByteFrame()
+	bf.WriteUint32(0)
+	bf.WriteUint8(pkt.Unk2)
+	bf.WriteUint8(pkt.Unk4)
+	bf.WriteUint16(0x1142)
+	s.QueueAck(pkt.AckHandle, bf.Data())
 }
 
-func handleMsgMhfReleaseEvent(s *Session, p mhfpacket.MHFPacket) {}
+func handleMsgMhfReleaseEvent(s *Session, p mhfpacket.MHFPacket) {
+	pkt := p.(*mhfpacket.MsgMhfReleaseEvent)
+	s.QueueAck(pkt.AckHandle, []byte{0x00, 0x41, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
+}
 
 func handleMsgMhfTransitMessage(s *Session, p mhfpacket.MHFPacket) {}
 
@@ -1338,12 +1414,12 @@ func handleMsgMhfEntryRookieGuild(s *Session, p mhfpacket.MHFPacket) {}
 func handleMsgMhfEnumerateQuest(s *Session, p mhfpacket.MHFPacket) {
 	// local files are easier for now, probably best would be to generate dynamically
 	pkt := p.(*mhfpacket.MsgMhfEnumerateQuest)
-		data, err := ioutil.ReadFile(filepath.Join(s.server.erupeConfig.BinPath, fmt.Sprintf("questlists/list_%d.bin",pkt.QuestList)))
+	data, err := ioutil.ReadFile(filepath.Join(s.server.erupeConfig.BinPath, fmt.Sprintf("questlists/list_%d.bin", pkt.QuestList)))
 	if err != nil {
-	  fmt.Printf("questlists/list_%d.bin",pkt.QuestList)
+		fmt.Printf("questlists/list_%d.bin", pkt.QuestList)
 		stubEnumerateNoResults(s, pkt.AckHandle)
 	} else {
-			doSizedAckResp(s, pkt.AckHandle, data)
+		doSizedAckResp(s, pkt.AckHandle, data)
 	}
 	// Update the client's rights as well:
 	updateRights(s)
@@ -1415,7 +1491,7 @@ func handleMsgMhfEnumerateShop(s *Session, p mhfpacket.MHFPacket) {
 		stubEnumerateNoResults(s, pkt.AckHandle)
 	} else if pkt.ShopType == 7 {
 		// GCP conversion store
-		if pkt.ShopID == 0{
+		if pkt.ShopID == 0 {
 			// Items to GCP exchange. Gou Tickets, Shiten Tickets, GP Tickets
 			data, _ := hex.DecodeString("000300033a9186fb000033860000000a000100000000000000000000000000000000097fdb1c0000067e0000000a0001000000000000000000000000000000001374db29000027c300000064000100000000000000000000000000000000")
 			doSizedAckResp(s, pkt.AckHandle, data)
@@ -1425,7 +1501,7 @@ func handleMsgMhfEnumerateShop(s *Session, p mhfpacket.MHFPacket) {
 	} else if pkt.ShopType == 8 {
 		// Dive Defense sections
 		// 00 = normal level limited exchange store, 05 = GCP skill store, 07 = limited quantity exchange
- 		if pkt.ShopID == 5{
+		if pkt.ShopID == 5 {
 			// diva defense skill level limited store
 			data, _ := hex.DecodeString("001f001f2c9365c1000000010000001e000a0000000000000000000a0000000000001979f1c2000000020000003c000a0000000000000000000a0000000000003e5197df000000030000003c000a0000000000000000000a000000000000219337c0000000040000001e000a0000000000000000000a00000000000009b24c9d000000140000001e000a0000000000000000000a0000000000001f1d496e000000150000001e000a0000000000000000000a0000000000003b918fcb000000160000003c000a0000000000000000000a0000000000000b7fd81c000000170000003c000a0000000000000000000a0000000000001374f239000000180000003c000a0000000000000000000a00000000000026950cba0000001c0000003c000a0000000000000000000a0000000000003797eae70000001d0000003c000a012b000000000000000a00000000000015758ad8000000050000003c00000000000000000000000a0000000000003c7035050000000600000050000a0000000000000001000a00000000000024f3b5560000000700000050000a0000000000000001000a00000000000000b600330000000800000050000a0000000000000001000a0000000000002efdce840000001900000050000a0000000000000001000a0000000000002d9365f10000001a00000050000a0000000000000001000a0000000000001979f3420000001f00000050000a012b000000000001000a0000000000003f5397cf0000002000000050000a012b000000000001000a000000000000319337c00000002100000050000a012b000000000001000a00000000000008b04cbd0000000900000064000a0000000000000002000a0000000000000b1d4b6e0000000a00000064000a0000000000000002000a0000000000003b918feb0000000b00000064000a0000000000000002000a0000000000001b7fd81c0000000c00000064000a0000000000000002000a0000000000001276f2290000000d00000064000a0000000000000002000a00000000000022950cba0000000e000000c8000a0000000000000002000a0000000000003697ead70000000f000001f4000a0000000000000003000a00000000000005758a5800000010000003e8000a0000000000000003000a0000000000003c7035250000001b000001f4000a0000000000010003000a00000000000034f3b5d60000001e00000064000a012b000000000003000a00000000000000b600030000002200000064000a0000000000010003000a000000000000")
 			doSizedAckResp(s, pkt.AckHandle, data)
@@ -1517,10 +1593,8 @@ func handleMsgMhfAcquireCafeItem(s *Session, p mhfpacket.MHFPacket) {}
 
 func handleMsgMhfUpdateCafepoint(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfUpdateCafepoint)
-	resp := byteframe.NewByteFrame()
-	resp.WriteBytes([]byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x8b})
-
-	doSizedAckResp(s, pkt.AckHandle, resp.Data())
+	// not sized
+	s.QueueAck(pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x8b})
 }
 
 func handleMsgMhfCheckDailyCafepoint(s *Session, p mhfpacket.MHFPacket) {}
@@ -1703,36 +1777,36 @@ func handleMsgMhfGetWeeklySchedule(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfGetWeeklySchedule)
 	//japanese timestamps as client needs to be in japanese locale
 	var t = time.Now().In(time.FixedZone("UTC+9", 9*60*60))
-	year,month,day := t.Date()
+	year, month, day := t.Date()
 	midnight := time.Date(year, month, day, 0, 0, 0, 0, t.Location()).Add(time.Hour)
 	// ActiveFeatures is a bit field, 0x3FFF is all 14 active features.
 	// Long term it should probably be made persistent and simply cycle a couple daily
 	// Times seem to need to be midnight which is likely why matching timezone was required originally
 	eventSchedules := []struct {
-		StartTime time.Time
-		ActiveFeatures      uint32
-		Unk1      uint16
+		StartTime      time.Time
+		ActiveFeatures uint32
+		Unk1           uint16
 	}{
 		{
-			StartTime: midnight.Add(-24*time.Hour), // midnight of previous day.
-			ActiveFeatures:      0x3FFF,
-			Unk1:      0,
+			StartTime:      midnight.Add(-24 * time.Hour), // midnight of previous day.
+			ActiveFeatures: 0x3FFF,
+			Unk1:           0,
 		},
 		{
-			StartTime: midnight, // midnight of this day.
-			ActiveFeatures:      0x3FFF,
-			Unk1:      0,
+			StartTime:      midnight, // midnight of this day.
+			ActiveFeatures: 0x3FFF,
+			Unk1:           0,
 		},
 		{
-			StartTime: midnight.Add(24*time.Hour), // midnight of following day.
-			ActiveFeatures:      0x3FFF,
-			Unk1:      0,
+			StartTime:      midnight.Add(24 * time.Hour), // midnight of following day.
+			ActiveFeatures: 0x3FFF,
+			Unk1:           0,
 		},
 	}
 
 	resp := byteframe.NewByteFrame()
-	resp.WriteUint8(uint8(len(eventSchedules))) // Entry count, client only parses the first 7 or 8.
-	resp.WriteUint32(uint32(t.Add(-5*time.Minute).Unix())) // 5 minutes ago server time
+	resp.WriteUint8(uint8(len(eventSchedules)))              // Entry count, client only parses the first 7 or 8.
+	resp.WriteUint32(uint32(t.Add(-5 * time.Minute).Unix())) // 5 minutes ago server time
 	for _, es := range eventSchedules {
 		resp.WriteUint32(uint32(es.StartTime.Unix()))
 		resp.WriteUint32(es.ActiveFeatures)
@@ -2261,7 +2335,7 @@ func handleMsgMhfPostGemInfo(s *Session, p mhfpacket.MHFPacket) {}
 func handleMsgMhfGetEarthValue(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfGetEarthValue)
 	var earthValues []struct{ Unk0, Unk1, Unk2, Unk3, Unk4, Unk5 uint32 }
-	if pkt.ReqType == 3{
+	if pkt.ReqType == 3 {
 		earthValues = []struct {
 			Unk0, Unk1, Unk2, Unk3, Unk4, Unk5 uint32
 		}{
@@ -2280,7 +2354,7 @@ func handleMsgMhfGetEarthValue(s *Session, p mhfpacket.MHFPacket) {
 				Unk2: 0x012C,
 			},
 		}
-	} else if pkt.ReqType == 2{
+	} else if pkt.ReqType == 2 {
 		earthValues = []struct {
 			Unk0, Unk1, Unk2, Unk3, Unk4, Unk5 uint32
 		}{
@@ -2294,19 +2368,19 @@ func handleMsgMhfGetEarthValue(s *Session, p mhfpacket.MHFPacket) {
 				Unk1: 0x0737,
 			},
 		}
-	}else if pkt.ReqType == 1{
-			earthValues = []struct {
-				Unk0, Unk1, Unk2, Unk3, Unk4, Unk5 uint32
-			}{
-				// JP simply sent 01 and 02 respectively
-				{
-					Unk0: 0x01,
-					Unk1: 0x0138,
-				},
-				{
-					Unk0: 0x02,
-					Unk1: 0x63,
-				},
+	} else if pkt.ReqType == 1 {
+		earthValues = []struct {
+			Unk0, Unk1, Unk2, Unk3, Unk4, Unk5 uint32
+		}{
+			// JP simply sent 01 and 02 respectively
+			{
+				Unk0: 0x01,
+				Unk1: 0x0138,
+			},
+			{
+				Unk0: 0x02,
+				Unk1: 0x63,
+			},
 		}
 	}
 
@@ -2525,79 +2599,106 @@ func handleMsgMhfSetRejectGuildScout(s *Session, p mhfpacket.MHFPacket) {}
 
 func handleMsgMhfGetCaAchievementHist(s *Session, p mhfpacket.MHFPacket) {}
 
-func handleMsgMhfSetCaAchievementHist(s *Session, p mhfpacket.MHFPacket) {}
+func handleMsgMhfSetCaAchievementHist(s *Session, p mhfpacket.MHFPacket) {
+				pkt := p.(*mhfpacket.MsgMhfSetCaAchievementHist)
+				s.QueueAck(pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
+}
 
 func handleMsgMhfGetKeepLoginBoostStatus(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfGetKeepLoginBoostStatus)
 
-	unkRespFields := [5]struct {
-		U0, U1, U2 uint8
-		U3         uint32
+	//var t = time.Now().In(time.FixedZone("UTC+9", 9*60*60)) // uncomment to enable permanently
+	// Directly interacts with MsgMhfUseKeepLoginBoost
+	// TODO: make these states persistent on a per character basis
+	loginBoostStatus := [5]struct {
+		WeeekReq, WeekCount, Available uint8
+		Expiration         uint32
 	}{
 		{
-			U0: 1,
-			U1: 1,
-			U2: 1,
-			U3: 0,
+			WeeekReq: 1, // weeks needed to unlock
+			WeekCount: 1, // weeks passed
+			Available: 1, // available
+			Expiration: 0, //uint32(t.Add(120 * time.Minute).Unix()), // uncomment to enable permanently
 		},
 		{
-			U0: 2,
-			U1: 0,
-			U2: 1,
-			U3: 0,
+			WeeekReq: 2,
+			WeekCount: 0,
+			Available: 1,
+			Expiration: 0,
 		},
 		{
-			U0: 3,
-			U1: 0,
-			U2: 1,
-			U3: 0,
+			WeeekReq: 3,
+			WeekCount: 0,
+			Available: 1,
+			Expiration: 0,
 		},
 		{
-			U0: 4,
-			U1: 0,
-			U2: 1,
-			U3: 0,
+			WeeekReq: 4,
+			WeekCount: 0,
+			Available: 1,
+			Expiration: 0,
 		},
 		{
-			U0: 5,
-			U1: 0,
-			U2: 1,
-			U3: 0,
+			WeeekReq: 5,
+			WeekCount: 0,
+			Available: 1,
+			Expiration: 0,
 		},
 	}
 
 	resp := byteframe.NewByteFrame()
-	for _, v := range unkRespFields {
-		resp.WriteUint8(v.U0)
-		resp.WriteUint8(v.U1)
-		resp.WriteUint8(v.U2)
-		resp.WriteUint32(v.U3)
+	for _, v := range loginBoostStatus {
+		resp.WriteUint8(v.WeeekReq)
+		resp.WriteUint8(v.WeekCount)
+		resp.WriteUint8(v.Available)
+		resp.WriteUint32(v.Expiration)
 	}
 	doSizedAckResp(s, pkt.AckHandle, resp.Data())
 }
 
-func handleMsgMhfUseKeepLoginBoost(s *Session, p mhfpacket.MHFPacket) {}
+func handleMsgMhfUseKeepLoginBoost(s *Session, p mhfpacket.MHFPacket) {
+	// Directly interacts with MhfGetKeepLoginBoostStatus
+	// TODO: make these states persistent on a per character basis
+	pkt := p.(*mhfpacket.MsgMhfUseKeepLoginBoost)
+	var t = time.Now().In(time.FixedZone("UTC+9", 9*60*60))
+	resp := byteframe.NewByteFrame()
+	resp.WriteUint32(0x1000005)
+	resp.WriteUint8(0)
+	// response is end timestamp based on input
+	if(pkt.BoostWeekUsed == 1){
+		resp.WriteUint32(uint32(t.Add(120 * time.Minute).Unix())) // Week 1 Timestamp, Festi start?
+	} else if(pkt.BoostWeekUsed == 2){
+		resp.WriteUint32(uint32(t.Add(240 * time.Minute).Unix())) // Week 1 Timestamp, Festi start?
+	} else if(pkt.BoostWeekUsed == 3){
+		resp.WriteUint32(uint32(t.Add(120 * time.Minute).Unix())) // Week 1 Timestamp, Festi start?
+	} else if(pkt.BoostWeekUsed == 4){
+		resp.WriteUint32(uint32(t.Add(180 * time.Hour).Unix())) // Week 1 Timestamp, Festi start?
+	} else if(pkt.BoostWeekUsed == 5){
+		resp.WriteUint32(uint32(t.Add(240 * time.Hour).Unix())) // Week 1 Timestamp, Festi start?
+	}
+  s.QueueAck(pkt.AckHandle, resp.Data())
+}
 
 func handleMsgMhfGetUdSchedule(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfGetUdSchedule)
 	var t = time.Now().In(time.FixedZone("UTC+9", 9*60*60))
-	year,month,day := t.Date()
+	year, month, day := t.Date()
 	midnight := time.Date(year, month, day, 0, 0, 0, 0, t.Location()).Add(time.Hour)
 	// Events with time limits are Festival with Sign up, Soul Week and Winners Weeks
 	// Diva Defense with Prayer, Interception and Song weeks
 	// Mezeporta Festival with simply 'available' being a weekend thing
 	resp := byteframe.NewByteFrame()
-	resp.WriteUint32(0x1d5fda5c) // Unk (1d5fda5c, 0b5397df)
-	resp.WriteUint32(uint32(midnight.Add(-24*21*time.Hour).Unix())) // Week 1 Timestamp, Festi start?
-	resp.WriteUint32(uint32(midnight.Add(-24*14*time.Hour).Unix())) // Week 2 Timestamp
-	resp.WriteUint32(uint32(midnight.Add(-24*14*time.Hour).Unix())) // Week 2 Timestamp
-	resp.WriteUint32(uint32(midnight.Add(24*7*time.Hour).Unix())) // Diva Defense Interception
-	resp.WriteUint32(uint32(midnight.Add(24*7*time.Hour).Unix())) // Diva Defense Interception
-	resp.WriteUint32(uint32(midnight.Add(24*14*time.Hour).Unix())) // Diva Defense Greeting Song
-	resp.WriteUint16(0x19)       // Unk
-	resp.WriteUint16(0x2d)       // Unk
-	resp.WriteUint16(0x02)       // Unk
-	resp.WriteUint16(0x02)       // Unk
+	resp.WriteUint32(0x1d5fda5c)                                        // Unk (1d5fda5c, 0b5397df)
+	resp.WriteUint32(uint32(midnight.Add(-24 * 21 * time.Hour).Unix())) // Week 1 Timestamp, Festi start?
+	resp.WriteUint32(uint32(midnight.Add(-24 * 14 * time.Hour).Unix())) // Week 2 Timestamp
+	resp.WriteUint32(uint32(midnight.Add(-24 * 14 * time.Hour).Unix())) // Week 2 Timestamp
+	resp.WriteUint32(uint32(midnight.Add(24 * 7 * time.Hour).Unix()))   // Diva Defense Interception
+	resp.WriteUint32(uint32(midnight.Add(24 * 7 * time.Hour).Unix()))   // Diva Defense Interception
+	resp.WriteUint32(uint32(midnight.Add(24 * 14 * time.Hour).Unix()))  // Diva Defense Greeting Song
+	resp.WriteUint16(0x19)                                              // Unk
+	resp.WriteUint16(0x2d)                                              // Unk
+	resp.WriteUint16(0x02)                                              // Unk
+	resp.WriteUint16(0x02)                                              // Unk
 
 	doSizedAckResp(s, pkt.AckHandle, resp.Data())
 }
@@ -2629,10 +2730,10 @@ func handleMsgMhfGetUdInfo(s *Session, p mhfpacket.MHFPacket) {
 }
 
 func handleMsgMhfGetKijuInfo(s *Session, p mhfpacket.MHFPacket) {
-		pkt := p.(*mhfpacket.MsgMhfGetKijuInfo)
-		// Temporary canned response
-		data, _ := hex.DecodeString("04965C959782CC8B468EEC00000000000000000000000000000000000000000000815C82A082E782B582DC82A982BA82CC82AB82B682E3815C0A965C959782C682CD96D282E98E7682A281420A95B782AD8ED282C997458B4382F0975E82A682E98142000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001018BAD8C8282CC8B468EEC00000000000000000000000000000000000000000000815C82AB82E582A482B082AB82CC82AB82B682E3815C0A8BAD8C8282C682CD8BAD82A290BA904681420A95B782AD8ED282CC97CD82F08CA482AC909F82DC82B78142200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000003138C8B8F5782CC8B468EEC00000000000000000000000000000000000000000000815C82AF82C182B582E382A482CC82AB82B682E3815C0A8C8B8F5782C682CD8A6D8CC582BD82E9904D978A81420A8F5782DF82E982D982C782C98EEB906C82BD82BF82CC90B8905F97CD82C682C882E9814200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000041189CC8CEC82CC8B468EEC00000000000000000000000000000000000000000000815C82A482BD82DC82E082E882CC82AB82B682E3815C0A89CC8CEC82C682CD89CC955082CC8CEC82E881420A8F5782DF82E982D982C782C98EEB906C82BD82BF82CC8E7882A682C682C882E9814220000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000212")
-		doSizedAckResp(s, pkt.AckHandle, data)
+	pkt := p.(*mhfpacket.MsgMhfGetKijuInfo)
+	// Temporary canned response
+	data, _ := hex.DecodeString("04965C959782CC8B468EEC00000000000000000000000000000000000000000000815C82A082E782B582DC82A982BA82CC82AB82B682E3815C0A965C959782C682CD96D282E98E7682A281420A95B782AD8ED282C997458B4382F0975E82A682E98142000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001018BAD8C8282CC8B468EEC00000000000000000000000000000000000000000000815C82AB82E582A482B082AB82CC82AB82B682E3815C0A8BAD8C8282C682CD8BAD82A290BA904681420A95B782AD8ED282CC97CD82F08CA482AC909F82DC82B78142200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000003138C8B8F5782CC8B468EEC00000000000000000000000000000000000000000000815C82AF82C182B582E382A482CC82AB82B682E3815C0A8C8B8F5782C682CD8A6D8CC582BD82E9904D978A81420A8F5782DF82E982D982C782C98EEB906C82BD82BF82CC90B8905F97CD82C682C882E9814200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000041189CC8CEC82CC8B468EEC00000000000000000000000000000000000000000000815C82A482BD82DC82E082E882CC82AB82B682E3815C0A89CC8CEC82C682CD89CC955082CC8CEC82E881420A8F5782DF82E982D982C782C98EEB906C82BD82BF82CC8E7882A682C682C882E9814220000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000212")
+	doSizedAckResp(s, pkt.AckHandle, data)
 }
 
 func handleMsgMhfSetKiju(s *Session, p mhfpacket.MHFPacket) {}
@@ -2865,7 +2966,7 @@ func handleMsgMhfGetUdTacticsPoint(s *Session, p mhfpacket.MHFPacket) {
 }
 
 func handleMsgMhfAddUdTacticsPoint(s *Session, p mhfpacket.MHFPacket) {
-pkt := p.(*mhfpacket.MsgMhfAddUdTacticsPoint)
+	pkt := p.(*mhfpacket.MsgMhfAddUdTacticsPoint)
 	stubEnumerateNoResults(s, pkt.AckHandle)
 }
 
@@ -3094,9 +3195,7 @@ func handleMsgMhfGetRengokuBinary(s *Session, p mhfpacket.MHFPacket) {
 	if err != nil {
 		panic(err)
 	}
-
 	doSizedAckResp(s, pkt.AckHandle, data)
-
 }
 
 func handleMsgMhfEnumerateRengokuRanking(s *Session, p mhfpacket.MHFPacket) {
