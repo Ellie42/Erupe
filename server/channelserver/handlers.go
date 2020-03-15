@@ -550,19 +550,6 @@ func removeSessionFromStage(s *Session) {
 	}
 }
 
-func stageContainsSession(stage *Stage, s *Session) bool {
-	stage.RLock()
-	defer stage.RUnlock()
-
-	for session := range stage.clients {
-		if session == s {
-			return true
-		}
-	}
-
-	return false
-}
-
 func logoutPlayer(s *Session) {
 	s.stage.RLock()
 	for client := range s.stage.clients {
