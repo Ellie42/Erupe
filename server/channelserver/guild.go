@@ -163,3 +163,71 @@ func buildGuildMemberObjectFromDBResult(rows *sqlx.Rows, err error, s *Session) 
 
 	return memberData, nil
 }
+
+func CreateGuild(s *Session, guildName string) (int32, error) {
+	transaction, err := s.server.db.Begin()
+
+	if err != nil {
+		s.logger.Error("failed to start db transaction")
+		return 0, err
+	}
+
+	guildResult, err := transaction.Query(
+		"INSERT INTO guilds (name, leader_id) VALUES ($1, $2) RETURNING id",
+		guildName, s.charID,
+	)
+
+	if err != nil {
+		s.logger.Error("failed to create guild")
+		rollbackTransaction(err, transaction, s)
+		return 0, err
+	}
+
+	var guildId int32
+
+	guildResult.Next()
+
+	err = guildResult.Scan(&guildId)
+
+	if err != nil {
+		s.logger.Error("failed to retrieve guild ID")
+		rollbackTransaction(err, transaction, s)
+		return 0, err
+	}
+
+	err = guildResult.Close()
+
+	if err != nil {
+		s.logger.Error("failed to finalise query")
+		rollbackTransaction(err, transaction, s)
+		return 0, err
+	}
+
+	_, err = transaction.Exec(`
+		INSERT INTO guild_characters (guild_id, character_id)
+		VALUES ($1, $2)
+	`, guildId, s.charID)
+
+	if err != nil {
+		s.logger.Error("failed to add character to guild")
+		rollbackTransaction(err, transaction, s)
+		return 0, err
+	}
+
+	err = transaction.Commit()
+
+	if err != nil {
+		s.logger.Error("failed to commit guild creation")
+		return 0, err
+	}
+
+	return guildId, nil
+}
+
+func rollbackTransaction(err error, transaction *sql.Tx, s *Session) {
+	err = transaction.Rollback()
+
+	if err != nil {
+		s.logger.Error("failed to rollback transaction")
+	}
+}
