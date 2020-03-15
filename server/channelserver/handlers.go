@@ -890,11 +890,15 @@ func handleMsgSysOpenMutex(s *Session, p mhfpacket.MHFPacket) {}
 
 func handleMsgSysCloseMutex(s *Session, p mhfpacket.MHFPacket) {}
 
-func handleMsgSysCreateSemaphore(s *Session, p mhfpacket.MHFPacket) {}
+func handleMsgSysCreateSemaphore(s *Session, p mhfpacket.MHFPacket) {
+	// All of the semaphore stuff very likely needs something like stage handling implemented
+	pkt := p.(*mhfpacket.MsgSysCreateSemaphore)
+	s.QueueAck(pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x00, 0x0d})
+}
 
 func handleMsgSysCreateAcquireSemaphore(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgSysCreateAcquireSemaphore)
-	doSizedAckResp(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x0F, 0x00, 0x1D})
+	s.QueueAck(pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x0F, 0x00, 0x1D})
 }
 
 func handleMsgSysDeleteSemaphore(s *Session, p mhfpacket.MHFPacket) {}
@@ -913,7 +917,9 @@ func handleMsgSysOperateRegister(s *Session, p mhfpacket.MHFPacket) {}
 
 func handleMsgSysLoadRegister(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgSysLoadRegister)
-	data, _ := hex.DecodeString("000C000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")
+	// ravi response
+	//data, _ := hex.DecodeString("000C000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")
+	data, _ := hex.DecodeString("01000076001d0001b2c4000227d1000221040000a959000000000000000000000000000000000000000000532d1c0010ee8e001fe0010007f463000000000017e53e00072e250053937a0000194a00002d5a000000000000000000004eb300004cd700000000000008a90000be400001bb16000005dd00000014")
 	doSizedAckResp(s, pkt.AckHandle, data)
 }
 
@@ -1104,7 +1110,7 @@ func handleMsgMhfSavedata(s *Session, p mhfpacket.MHFPacket) {
 
 	// Var to hold the decompressed savedata for updating the launcher response fields.
 	var decompressedData []byte
-
+	fmt.Printf("\n%d allocmemsize",pkt.AllocMemSize)
 	if pkt.SaveType == 1 {
 		// Diff-based update.
 
@@ -1116,14 +1122,20 @@ func handleMsgMhfSavedata(s *Session, p mhfpacket.MHFPacket) {
 		}
 
 		// Decompress
-		s.logger.Info("Decompressing...")
+		s.logger.Info("\nDecompressing...")
 		data, err = nullcomp.Decompress(data)
 		if err != nil {
 			s.logger.Fatal("Failed to decompress savedata from db", zap.Error(err))
 		}
 
+		// diffs themselves are also potentially compressed
+		diff, err := nullcomp.Decompress(pkt.RawDataPayload)
+		if err != nil {
+			s.logger.Fatal("Failed to decompress diff", zap.Error(err))
+		}
+
 		// Perform diff.
-		data = deltacomp.ApplyDataDiff(pkt.RawDataPayload, data)
+		data = deltacomp.ApplyDataDiff(diff, data)
 
 		// Make a copy for updating the launcher fields.
 		decompressedData = make([]byte, len(data))
@@ -1204,13 +1216,64 @@ func handleMsgMhfListMember(s *Session, p mhfpacket.MHFPacket) {
 
 func handleMsgMhfOprMember(s *Session, p mhfpacket.MHFPacket) {}
 
-func handleMsgMhfEnumerateDistItem(s *Session, p mhfpacket.MHFPacket) {}
+func handleMsgMhfEnumerateDistItem(s *Session, p mhfpacket.MHFPacket) {
+	pkt := p.(*mhfpacket.MsgMhfEnumerateDistItem)
+	// uint16 number of entries
+	// 446 entry block
+	// uint32 claimID
+	// 00 00 00 00 00 00
+	// uint16 timesClaimable
+	// 00 00 00 00 FF FF FF FF FF FF FF FF FF FF FF FF 00 00 00 00 00 00 00 00 00
+	// uint8 stringLength
+	// string nullTermString
+	data, _ := hex.DecodeString("0001000000FF0000000000000000002000000000FFFFFFFFFFFFFFFFFFFFFFFF0000000000000000002F323020426F7820457870616E73696F6E73000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")
+	doSizedAckResp(s, pkt.AckHandle, data)
 
-func handleMsgMhfApplyDistItem(s *Session, p mhfpacket.MHFPacket) {}
+}
 
-func handleMsgMhfAcquireDistItem(s *Session, p mhfpacket.MHFPacket) {}
+func handleMsgMhfApplyDistItem(s *Session, p mhfpacket.MHFPacket) {
+	// 0052a49100011f00000000000000010274db99 equipment box page
+	// 0052a48f00011e0000000000000001195dda5c item box page
+	// 0052a49400010700003ae30000000132d3a4d6 Item ID 3AE3
+	// HEADER:
+	// int32: Unique item hash for tracking server side purchases? Swapping across items didn't change image/cost/function etc.
+	// int16: Number of distributed item types
+	// ITEM ENTRY
+	// int8:  distribution type
+	// 00 = legs, 01 = Head, 02 = Chest, 03 = Arms, 04 = Waist, 05 = Melee, 06 = Ranged, 07 = Item, 08 == furniture
+	// ids are wrong shop displays in random order
+	// 09 = Nothing, 10 = Null Point, 11 = Festi Point, 12 = Zeny, 13 = Pugi Outfit, 14 = Null Points, 15 = My Tore points
+	// 16 = Gook Costumes, 17 = Image Change Points, 18 = N Points, 19 = Gacha Coins, 20 = Trial Gacha Coins, 21 = Frontier points
+	// 22 = Guild Points, 23 = RP?, 30 = Item Box Page, 31 = Equipment Box Page
+	// int16: Unk
+	// int16: Item when type 07
+	// int16: Unk
+	// int16: Number delivered in batch
+	// int32: Unique item hash for tracking server side purchases? Swapping across items didn't change image/cost/function etc.
+	pkt := p.(*mhfpacket.MsgMhfApplyDistItem)
+	if(pkt.RequestType == 0){
+		doSizedAckResp(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
+	} else if(pkt.RequestType == 0x000000FF){
+		// box expansions
+		data, _ := hex.DecodeString("0052a49100021f00000000000000140274db991e00000000000000140274db99")
+		doSizedAckResp(s, pkt.AckHandle, data)
+	} else {
+		doSizedAckResp(s, pkt.AckHandle,  []byte{0x00, 0x00, 0x00, 0x00})
+	}
+}
 
-func handleMsgMhfGetDistDescription(s *Session, p mhfpacket.MHFPacket) {}
+func handleMsgMhfAcquireDistItem(s *Session, p mhfpacket.MHFPacket) {
+	pkt := p.(*mhfpacket.MsgMhfAcquireDistItem)
+	s.QueueAck(pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
+}
+
+func handleMsgMhfGetDistDescription(s *Session, p mhfpacket.MHFPacket) {
+	pkt := p.(*mhfpacket.MsgMhfGetDistDescription)
+	// string for the associated message
+	data, _ := hex.DecodeString("007E43303547656E65726963204974656D20436C61696D204D6573736167657E4330300D0A596F752067657420736F6D65206B696E64206F66206974656D732070726F6261626C792E00000100")
+	//data, _ := hex.DecodeString("0075b750c1c2b17ac1cab652a1757e433035b8cbb3c6bd63c258b169aa41b0c87e433030a1760a0aa175b8cbb3c6bd63c258b169aa41b0c8a176a843c1caa44a31a6b8a141a569c258b169a2b0add30aa8a4a6e2aabaa175b8cbb3c6bd63a176a2b0adb6a143b3cca668a569c258b169a2b4adb6a14300000100")
+	doSizedAckResp(s, pkt.AckHandle, data)
+}
 
 func handleMsgMhfSendMail(s *Session, p mhfpacket.MHFPacket) {}
 
@@ -1236,10 +1299,18 @@ func handleMsgMhfSaveFavoriteQuest(s *Session, p mhfpacket.MHFPacket) {
 
 func handleMsgMhfRegisterEvent(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfRegisterEvent)
-	s.QueueAck(pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
+	bf := byteframe.NewByteFrame()
+	bf.WriteUint32(0)
+	bf.WriteUint8(pkt.Unk2)
+	bf.WriteUint8(pkt.Unk4)
+	bf.WriteUint16(0x1142)
+	s.QueueAck(pkt.AckHandle, bf.Data())
 }
 
-func handleMsgMhfReleaseEvent(s *Session, p mhfpacket.MHFPacket) {}
+func handleMsgMhfReleaseEvent(s *Session, p mhfpacket.MHFPacket) {
+	pkt := p.(*mhfpacket.MsgMhfReleaseEvent)
+	s.QueueAck(pkt.AckHandle, []byte{0x00, 0x41, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
+}
 
 func handleMsgMhfTransitMessage(s *Session, p mhfpacket.MHFPacket) {}
 
@@ -1707,10 +1778,8 @@ func handleMsgMhfAcquireCafeItem(s *Session, p mhfpacket.MHFPacket) {}
 
 func handleMsgMhfUpdateCafepoint(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfUpdateCafepoint)
-	resp := byteframe.NewByteFrame()
-	resp.WriteBytes([]byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x8b})
-
-	doSizedAckResp(s, pkt.AckHandle, resp.Data())
+	// not sized
+	s.QueueAck(pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x8b})
 }
 
 func handleMsgMhfCheckDailyCafepoint(s *Session, p mhfpacket.MHFPacket) {}
@@ -2766,58 +2835,85 @@ func handleMsgMhfSetRejectGuildScout(s *Session, p mhfpacket.MHFPacket) {}
 
 func handleMsgMhfGetCaAchievementHist(s *Session, p mhfpacket.MHFPacket) {}
 
-func handleMsgMhfSetCaAchievementHist(s *Session, p mhfpacket.MHFPacket) {}
+func handleMsgMhfSetCaAchievementHist(s *Session, p mhfpacket.MHFPacket) {
+				pkt := p.(*mhfpacket.MsgMhfSetCaAchievementHist)
+				s.QueueAck(pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
+}
 
 func handleMsgMhfGetKeepLoginBoostStatus(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfGetKeepLoginBoostStatus)
 
-	unkRespFields := [5]struct {
-		U0, U1, U2 uint8
-		U3         uint32
+	//var t = time.Now().In(time.FixedZone("UTC+9", 9*60*60)) // uncomment to enable permanently
+	// Directly interacts with MsgMhfUseKeepLoginBoost
+	// TODO: make these states persistent on a per character basis
+	loginBoostStatus := [5]struct {
+		WeeekReq, WeekCount, Available uint8
+		Expiration         uint32
 	}{
 		{
-			U0: 1,
-			U1: 1,
-			U2: 1,
-			U3: 0,
+			WeeekReq: 1, // weeks needed to unlock
+			WeekCount: 1, // weeks passed
+			Available: 1, // available
+			Expiration: 0, //uint32(t.Add(120 * time.Minute).Unix()), // uncomment to enable permanently
 		},
 		{
-			U0: 2,
-			U1: 0,
-			U2: 1,
-			U3: 0,
+			WeeekReq: 2,
+			WeekCount: 0,
+			Available: 1,
+			Expiration: 0,
 		},
 		{
-			U0: 3,
-			U1: 0,
-			U2: 1,
-			U3: 0,
+			WeeekReq: 3,
+			WeekCount: 0,
+			Available: 1,
+			Expiration: 0,
 		},
 		{
-			U0: 4,
-			U1: 0,
-			U2: 1,
-			U3: 0,
+			WeeekReq: 4,
+			WeekCount: 0,
+			Available: 1,
+			Expiration: 0,
 		},
 		{
-			U0: 5,
-			U1: 0,
-			U2: 1,
-			U3: 0,
+			WeeekReq: 5,
+			WeekCount: 0,
+			Available: 1,
+			Expiration: 0,
 		},
 	}
 
 	resp := byteframe.NewByteFrame()
-	for _, v := range unkRespFields {
-		resp.WriteUint8(v.U0)
-		resp.WriteUint8(v.U1)
-		resp.WriteUint8(v.U2)
-		resp.WriteUint32(v.U3)
+	for _, v := range loginBoostStatus {
+		resp.WriteUint8(v.WeeekReq)
+		resp.WriteUint8(v.WeekCount)
+		resp.WriteUint8(v.Available)
+		resp.WriteUint32(v.Expiration)
 	}
 	doSizedAckResp(s, pkt.AckHandle, resp.Data())
 }
 
-func handleMsgMhfUseKeepLoginBoost(s *Session, p mhfpacket.MHFPacket) {}
+func handleMsgMhfUseKeepLoginBoost(s *Session, p mhfpacket.MHFPacket) {
+	// Directly interacts with MhfGetKeepLoginBoostStatus
+	// TODO: make these states persistent on a per character basis
+	pkt := p.(*mhfpacket.MsgMhfUseKeepLoginBoost)
+	var t = time.Now().In(time.FixedZone("UTC+9", 9*60*60))
+	resp := byteframe.NewByteFrame()
+	resp.WriteUint32(0x1000005)
+	resp.WriteUint8(0)
+	// response is end timestamp based on input
+	if(pkt.BoostWeekUsed == 1){
+		resp.WriteUint32(uint32(t.Add(120 * time.Minute).Unix())) // Week 1 Timestamp, Festi start?
+	} else if(pkt.BoostWeekUsed == 2){
+		resp.WriteUint32(uint32(t.Add(240 * time.Minute).Unix())) // Week 1 Timestamp, Festi start?
+	} else if(pkt.BoostWeekUsed == 3){
+		resp.WriteUint32(uint32(t.Add(120 * time.Minute).Unix())) // Week 1 Timestamp, Festi start?
+	} else if(pkt.BoostWeekUsed == 4){
+		resp.WriteUint32(uint32(t.Add(180 * time.Hour).Unix())) // Week 1 Timestamp, Festi start?
+	} else if(pkt.BoostWeekUsed == 5){
+		resp.WriteUint32(uint32(t.Add(240 * time.Hour).Unix())) // Week 1 Timestamp, Festi start?
+	}
+  s.QueueAck(pkt.AckHandle, resp.Data())
+}
 
 func handleMsgMhfGetUdSchedule(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfGetUdSchedule)
@@ -3335,9 +3431,7 @@ func handleMsgMhfGetRengokuBinary(s *Session, p mhfpacket.MHFPacket) {
 	if err != nil {
 		panic(err)
 	}
-
 	doSizedAckResp(s, pkt.AckHandle, data)
-
 }
 
 func handleMsgMhfEnumerateRengokuRanking(s *Session, p mhfpacket.MHFPacket) {
