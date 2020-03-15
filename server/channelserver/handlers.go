@@ -1496,7 +1496,7 @@ func handleMsgMhfEnumerateGuildMember(s *Session, p mhfpacket.MHFPacket) {
 
 	for _, member := range guildMembers {
 		bf.WriteUint32(member.CharID)
-		bf.WriteBytes([]byte{0x00, 0x63, 0x00, 0x00, 0x3A, 0xE9, 0x06, 0x00, 0x01})
+		bf.WriteBytes([]byte{0x00, 0x63, 0x00, 0x00, 0x3A, 0xE9, 0x06, 0x00, 0x01}) // Unk
 		bf.WriteUint16(uint16(len(member.Name)))
 		bf.WriteBytes([]byte(member.Name))
 	}
