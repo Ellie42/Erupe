@@ -10,7 +10,7 @@ import (
 type Guild struct {
 	ID          uint32
 	Name        string
-	Message     string
+	MainMotto   string
 	CreatedAt   time.Time
 	MemberCount uint16
 	Leader      *GuildMember

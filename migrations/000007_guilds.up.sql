@@ -6,7 +6,7 @@ CREATE TABLE guilds
     name       varchar(24),
     created_at timestamp    DEFAULT NOW(),
     leader_id  int    NOT NULL,
-    message    varchar(255) DEFAULT ''
+    main_motto    varchar(255) DEFAULT ''
 );
 
 CREATE TABLE guild_characters

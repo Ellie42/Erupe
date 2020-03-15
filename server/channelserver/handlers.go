@@ -1505,16 +1505,16 @@ func handleMsgMhfInfoGuild(s *Session, p mhfpacket.MHFPacket) {
 
 		bf.WriteUint16(0x01) // Unk appears to be static
 
-		guildMessage := fmt.Sprintf("%s\x00", guild.Message)
+		guildMainMotto := fmt.Sprintf("%s\x00", guild.MainMotto)
 
 		bf.WriteUint32(uint32(guild.CreatedAt.Unix()))
 		bf.WriteUint32(uint32(characterGuildData.JoinedAt.Unix()))
 		bf.WriteUint8(uint8(len(guild.Name)))
-		bf.WriteUint8(uint8(len(guildMessage)))
+		bf.WriteUint8(uint8(len(guildMainMotto)))
 		bf.WriteUint8(uint8(5)) // Length of unknown string below
 		bf.WriteUint8(uint8(len(guild.Leader.Name)))
 		bf.WriteBytes([]byte(guild.Name))
-		bf.WriteBytes([]byte(guildMessage))
+		bf.WriteBytes([]byte(guildMainMotto))
 		bf.WriteBytes([]byte{0xFF, 0x00, 0x00, 0x00, 0x00}) // Unk string
 		bf.WriteBytes([]byte(guild.Leader.Name))
 		bf.WriteBytes([]byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x02, 0x00, 0x00, 0x00, 0x00}) // Unk
