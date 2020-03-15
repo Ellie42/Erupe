@@ -17,6 +17,6 @@ CREATE TABLE guild_characters
     joined_at    timestamp DEFAULT NOW()
 );
 
-CREATE UNIQUE INDEX guild_character_unique_index ON guild_characters (guild_id, character_id);
+CREATE UNIQUE INDEX guild_character_unique_index ON guild_characters (character_id);
 
 END;
