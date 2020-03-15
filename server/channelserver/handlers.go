@@ -977,6 +977,7 @@ func handleMsgSysPositionObject(s *Session, p mhfpacket.MHFPacket) {
 			object.x = pkt.X
 			object.y = pkt.Y
 			object.z = pkt.Z
+			break
 		}
 	}
 	s.stage.Unlock()
