@@ -549,19 +549,6 @@ func removeSessionFromStage(s *Session) {
 	}
 }
 
-func stageContainsSession(stage *Stage, s *Session) bool {
-	stage.RLock()
-	defer stage.RUnlock()
-
-	for session := range stage.clients {
-		if session == s {
-			return true
-		}
-	}
-
-	return false
-}
-
 func logoutPlayer(s *Session) {
 	s.stage.RLock()
 	for client := range s.stage.clients {
@@ -976,6 +963,17 @@ func handleMsgSysPositionObject(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgSysPositionObject)
 	fmt.Printf("Moved object %v to (%f,%f,%f)\n", pkt.ObjID, pkt.X, pkt.Y, pkt.Z)
 
+	s.stage.Lock()
+	for index, object := range s.stage.objects {
+		if index == pkt.ObjID {
+			object.x = pkt.X
+			object.y = pkt.Y
+			object.z = pkt.Z
+			break
+		}
+	}
+	s.stage.Unlock()
+
 	// One of the few packets we can just re-broadcast directly.
 	s.stage.BroadcastMHF(pkt, s)
 }
@@ -1098,7 +1096,7 @@ func handleMsgMhfSavedata(s *Session, p mhfpacket.MHFPacket) {
 
 	// Var to hold the decompressed savedata for updating the launcher response fields.
 	var decompressedData []byte
-	fmt.Printf("\n%d allocmemsize",pkt.AllocMemSize)
+	fmt.Printf("\n%d allocmemsize", pkt.AllocMemSize)
 	if pkt.SaveType == 1 {
 		// Diff-based update.
 
@@ -1239,14 +1237,14 @@ func handleMsgMhfApplyDistItem(s *Session, p mhfpacket.MHFPacket) {
 	// int16: Number delivered in batch
 	// int32: Unique item hash for tracking server side purchases? Swapping across items didn't change image/cost/function etc.
 	pkt := p.(*mhfpacket.MsgMhfApplyDistItem)
-	if(pkt.RequestType == 0){
+	if pkt.RequestType == 0 {
 		doSizedAckResp(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
-	} else if(pkt.RequestType == 0x000000FF){
+	} else if pkt.RequestType == 0x000000FF {
 		// box expansions
 		data, _ := hex.DecodeString("0052a49100021f00000000000000140274db991e00000000000000140274db99")
 		doSizedAckResp(s, pkt.AckHandle, data)
 	} else {
-		doSizedAckResp(s, pkt.AckHandle,  []byte{0x00, 0x00, 0x00, 0x00})
+		doSizedAckResp(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
 	}
 }
 
@@ -1364,7 +1362,32 @@ func handleMsgMhfCaravanRanking(s *Session, p mhfpacket.MHFPacket) {}
 
 func handleMsgMhfCaravanMyRank(s *Session, p mhfpacket.MHFPacket) {}
 
-func handleMsgMhfCreateGuild(s *Session, p mhfpacket.MHFPacket) {}
+func handleMsgMhfCreateGuild(s *Session, p mhfpacket.MHFPacket) {
+	pkt := p.(*mhfpacket.MsgMhfCreateGuild)
+
+	guildId, err := CreateGuild(s, stripNullTerminator(pkt.Name))
+
+	if err != nil {
+		bf := byteframe.NewByteFrameFromBytes([]byte{0x00, 0x00, 0x00, 0x00})
+
+		// No reasoning behind these values other than they cause a 'failed to create'
+		// style message, it's better than nothing for now.
+		bf.WriteUint32(0x01010101)
+
+		ack := &mhfpacket.MsgSysAck{AckHandle: pkt.AckHandle, AckData: bf.Data()}
+
+		s.QueueSendMHF(ack)
+		return
+	}
+
+	bf := byteframe.NewByteFrameFromBytes([]byte{0x00, 0x00, 0x00, 0x00})
+
+	bf.WriteUint32(uint32(guildId))
+
+	ack := &mhfpacket.MsgSysAck{AckHandle: pkt.AckHandle, AckData: bf.Data()}
+
+	s.QueueSendMHF(ack)
+}
 
 func handleMsgMhfOperateGuild(s *Session, p mhfpacket.MHFPacket) {}
 
@@ -1373,12 +1396,75 @@ func handleMsgMhfOperateGuildMember(s *Session, p mhfpacket.MHFPacket) {}
 func handleMsgMhfInfoGuild(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfInfoGuild)
 
-	// REALLY large/complex format... stubbing it out here for simplicity.
-	resp := byteframe.NewByteFrame()
-	resp.WriteUint32(0) // Count
-	resp.WriteUint8(0)  // Unk, read if count == 0.
+	if guild, err := GetGuildInfoByCharacterId(s, s.charID); err == nil && guild != nil {
+		characterGuildData, err := GetCharacterGuildData(s, s.charID)
 
-	doSizedAckResp(s, pkt.AckHandle, resp.Data())
+		if err != nil {
+			resp := byteframe.NewByteFrame()
+			resp.WriteUint32(0) // Count
+			resp.WriteUint8(0)  // Unk, read if count == 0.
+
+			doSizedAckResp(s, pkt.AckHandle, resp.Data())
+			return
+		}
+
+		bf := byteframe.NewByteFrame()
+
+		bf.WriteUint32(uint32(guild.ID))
+		bf.WriteUint32(guild.Leader.CharID)
+		bf.WriteUint16(0x0) // Guild festival ranking (I think)
+		bf.WriteUint16(guild.MemberCount)
+
+		// Unk appears to be static
+		bf.WriteBytes([]byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
+
+		bf.WriteUint16(0x01) // Unk appears to be static
+
+		guildMainMotto := fmt.Sprintf("%s\x00", guild.MainMotto)
+
+		bf.WriteUint32(uint32(guild.CreatedAt.Unix()))
+		bf.WriteUint32(uint32(characterGuildData.JoinedAt.Unix()))
+		bf.WriteUint8(uint8(len(guild.Name)))
+		bf.WriteUint8(uint8(len(guildMainMotto)))
+		bf.WriteUint8(uint8(5)) // Length of unknown string below
+		bf.WriteUint8(uint8(len(guild.Leader.Name)))
+		bf.WriteBytes([]byte(guild.Name))
+		bf.WriteBytes([]byte(guildMainMotto))
+		bf.WriteBytes([]byte{0xFF, 0x00, 0x00, 0x00, 0x00}) // Unk string
+		bf.WriteBytes([]byte(guild.Leader.Name))
+		bf.WriteBytes([]byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x02, 0x00, 0x00, 0x00, 0x00}) // Unk
+
+		// Here there are always 3 null terminated names, not sure what they relate to though
+		// Having all three as null bytes is perfectly valid
+		for i := 0; i < 3; i++ {
+			bf.WriteUint8(0x1) // Name Length - 1 minimum due to null byte
+			bf.WriteUint8(0x0) // Name string
+		}
+
+		// Unk
+		bf.WriteBytes([]byte{
+			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1E, 0x00,
+			0x00, 0xD6, 0xD8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		})
+
+		// Unk-ish Indicates an alliance with 0x0a
+		// When using 0x1b there is a lot more data expected after
+		// 0x0 = no alliance
+		bf.WriteUint8(0x0)
+
+		// TODO add alliance parts here
+
+		bf.WriteBytes([]byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
+
+		doSizedAckResp(s, pkt.AckHandle, bf.Data())
+	} else {
+		// REALLY large/complex format... stubbing it out here for simplicity.
+		resp := byteframe.NewByteFrame()
+		resp.WriteUint32(0) // Count
+		resp.WriteUint8(0)  // Unk, read if count == 0.
+
+		doSizedAckResp(s, pkt.AckHandle, resp.Data())
+	}
 }
 
 func handleMsgMhfEnumerateGuild(s *Session, p mhfpacket.MHFPacket) {}
@@ -1389,7 +1475,43 @@ func handleMsgMhfArrangeGuildMember(s *Session, p mhfpacket.MHFPacket) {}
 
 func handleMsgMhfEnumerateGuildMember(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfEnumerateGuildMember)
-	stubEnumerateNoResults(s, pkt.AckHandle)
+	guild, err := GetGuildInfoByCharacterId(s, s.charID)
+
+	if err != nil || guild == nil {
+		s.logger.Warn("failed to retrieve guild sending no result message")
+		stubEnumerateNoResults(s, pkt.AckHandle)
+		return
+	}
+
+	guildMembers, err := GetGuildMembers(s, guild.ID, guild.MemberCount)
+
+	if err != nil {
+		s.logger.Error("failed to retrieve guild")
+		return
+	}
+
+	bf := byteframe.NewByteFrame()
+
+	bf.WriteUint16(guild.MemberCount)
+
+	for _, member := range guildMembers {
+		bf.WriteUint32(member.CharID)
+		bf.WriteBytes([]byte{0x00, 0x63, 0x00, 0x00, 0x3A, 0xE9, 0x06, 0x00, 0x01}) // Unk
+		bf.WriteUint16(uint16(len(member.Name)))
+		bf.WriteBytes([]byte(member.Name))
+	}
+
+	for _, member := range guildMembers {
+		bf.WriteUint32(uint32(member.JoinedAt.Unix()))
+	}
+
+	bf.WriteBytes([]byte{0x00, 0x00}) // Unk, might be to do with alliance, 0x00 == no alliance
+
+	for range guildMembers {
+		bf.WriteUint32(0x00) // Unk
+	}
+
+	doSizedAckResp(s, pkt.AckHandle, bf.Data())
 }
 
 func handleMsgMhfEnumerateCampaign(s *Session, p mhfpacket.MHFPacket) {}
@@ -2063,7 +2185,12 @@ func handleMsgMhfSavePartner(s *Session, p mhfpacket.MHFPacket) {
 
 func handleMsgMhfGetGuildMissionList(s *Session, p mhfpacket.MHFPacket) {}
 
-func handleMsgMhfGetGuildMissionRecord(s *Session, p mhfpacket.MHFPacket) {}
+func handleMsgMhfGetGuildMissionRecord(s *Session, p mhfpacket.MHFPacket) {
+	pkt := p.(*mhfpacket.MsgMhfGetGuildMissionRecord)
+
+	// No guild mission records = 0x190 empty bytes
+	doSizedAckResp(s, pkt.AckHandle, make([]byte, 0x190))
+}
 
 func handleMsgMhfAddGuildMissionCount(s *Session, p mhfpacket.MHFPacket) {}
 
@@ -2276,9 +2403,18 @@ func handleMsgMhfSaveHunterNavi(s *Session, p mhfpacket.MHFPacket) {
 
 func handleMsgMhfRegistSpabiTime(s *Session, p mhfpacket.MHFPacket) {}
 
-func handleMsgMhfGetGuildWeeklyBonusMaster(s *Session, p mhfpacket.MHFPacket) {}
+func handleMsgMhfGetGuildWeeklyBonusMaster(s *Session, p mhfpacket.MHFPacket) {
+	pkt := p.(*mhfpacket.MsgMhfGetGuildWeeklyBonusMaster)
 
-func handleMsgMhfGetGuildWeeklyBonusActiveCount(s *Session, p mhfpacket.MHFPacket) {}
+	// Values taken from brand new guild capture
+	doSizedAckResp(s, pkt.AckHandle, make([]byte, 0x28))
+}
+func handleMsgMhfGetGuildWeeklyBonusActiveCount(s *Session, p mhfpacket.MHFPacket) {
+	pkt := p.(*mhfpacket.MsgMhfGetGuildWeeklyBonusActiveCount)
+
+	// Values taken from brand new guild capture
+	doSizedAckResp(s, pkt.AckHandle, make([]byte, 0x03))
+}
 
 func handleMsgMhfAddGuildWeeklyBonusExceptionalUser(s *Session, p mhfpacket.MHFPacket) {}
 
@@ -2518,7 +2654,30 @@ func handleMsgMhfPostTinyBin(s *Session, p mhfpacket.MHFPacket) {}
 
 func handleMsgMhfGetSenyuDailyCount(s *Session, p mhfpacket.MHFPacket) {}
 
-func handleMsgMhfGetGuildTargetMemberNum(s *Session, p mhfpacket.MHFPacket) {}
+func handleMsgMhfGetGuildTargetMemberNum(s *Session, p mhfpacket.MHFPacket) {
+	pkt := p.(*mhfpacket.MsgMhfGetGuildTargetMemberNum)
+
+	var guild *Guild
+	var err error
+
+	if pkt.GuildID == 0x0 {
+		guild, err = GetGuildInfoByCharacterId(s, s.charID)
+	} else {
+		guild, err = GetGuildInfoByID(s, pkt.GuildID)
+	}
+
+	if err != nil || guild == nil {
+		s.logger.Warn("failed to find guild")
+		return
+	}
+
+	bf := byteframe.NewByteFrame()
+
+	bf.WriteUint16(0x0)
+	bf.WriteUint16(guild.MemberCount - 1)
+
+	doSizedAckResp(s, pkt.AckHandle, bf.Data())
+}
 
 func handleMsgMhfGetBoostRight(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfGetBoostRight)
@@ -2577,9 +2736,37 @@ func handleMsgMhfCancelGuildScout(s *Session, p mhfpacket.MHFPacket) {}
 
 func handleMsgMhfAnswerGuildScout(s *Session, p mhfpacket.MHFPacket) {}
 
-func handleMsgMhfGetGuildScoutList(s *Session, p mhfpacket.MHFPacket) {}
+func handleMsgMhfGetGuildScoutList(s *Session, p mhfpacket.MHFPacket) {
+	pkt := p.(*mhfpacket.MsgMhfGetGuildScoutList)
 
-func handleMsgMhfGetGuildManageRight(s *Session, p mhfpacket.MHFPacket) {}
+	// No scouting allowed
+	doSizedAckResp(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
+}
+
+func handleMsgMhfGetGuildManageRight(s *Session, p mhfpacket.MHFPacket) {
+	pkt := p.(*mhfpacket.MsgMhfGetGuildManageRight)
+
+	guild, err := GetGuildInfoByCharacterId(s, s.charID)
+
+	if err != nil {
+		s.logger.Warn("failed to respond to manage rights message")
+		return
+	}
+
+	bf := byteframe.NewByteFrame()
+
+	bf.WriteUint16(0x00) // Unk
+	bf.WriteUint16(guild.MemberCount)
+
+	members, err := GetGuildMembers(s, guild.ID, guild.MemberCount)
+
+	for _, member := range members {
+		bf.WriteUint32(member.CharID)
+		bf.WriteUint32(0x0)
+	}
+
+	doSizedAckResp(s, pkt.AckHandle, bf.Data())
+}
 
 func handleMsgMhfSetGuildManageRight(s *Session, p mhfpacket.MHFPacket) {}
 
@@ -2600,8 +2787,8 @@ func handleMsgMhfSetRejectGuildScout(s *Session, p mhfpacket.MHFPacket) {}
 func handleMsgMhfGetCaAchievementHist(s *Session, p mhfpacket.MHFPacket) {}
 
 func handleMsgMhfSetCaAchievementHist(s *Session, p mhfpacket.MHFPacket) {
-				pkt := p.(*mhfpacket.MsgMhfSetCaAchievementHist)
-				s.QueueAck(pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
+	pkt := p.(*mhfpacket.MsgMhfSetCaAchievementHist)
+	s.QueueAck(pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
 }
 
 func handleMsgMhfGetKeepLoginBoostStatus(s *Session, p mhfpacket.MHFPacket) {
@@ -2612,36 +2799,36 @@ func handleMsgMhfGetKeepLoginBoostStatus(s *Session, p mhfpacket.MHFPacket) {
 	// TODO: make these states persistent on a per character basis
 	loginBoostStatus := [5]struct {
 		WeeekReq, WeekCount, Available uint8
-		Expiration         uint32
+		Expiration                     uint32
 	}{
 		{
-			WeeekReq: 1, // weeks needed to unlock
-			WeekCount: 1, // weeks passed
-			Available: 1, // available
+			WeeekReq:   1, // weeks needed to unlock
+			WeekCount:  1, // weeks passed
+			Available:  1, // available
 			Expiration: 0, //uint32(t.Add(120 * time.Minute).Unix()), // uncomment to enable permanently
 		},
 		{
-			WeeekReq: 2,
-			WeekCount: 0,
-			Available: 1,
+			WeeekReq:   2,
+			WeekCount:  0,
+			Available:  1,
 			Expiration: 0,
 		},
 		{
-			WeeekReq: 3,
-			WeekCount: 0,
-			Available: 1,
+			WeeekReq:   3,
+			WeekCount:  0,
+			Available:  1,
 			Expiration: 0,
 		},
 		{
-			WeeekReq: 4,
-			WeekCount: 0,
-			Available: 1,
+			WeeekReq:   4,
+			WeekCount:  0,
+			Available:  1,
 			Expiration: 0,
 		},
 		{
-			WeeekReq: 5,
-			WeekCount: 0,
-			Available: 1,
+			WeeekReq:   5,
+			WeekCount:  0,
+			Available:  1,
 			Expiration: 0,
 		},
 	}
@@ -2665,18 +2852,18 @@ func handleMsgMhfUseKeepLoginBoost(s *Session, p mhfpacket.MHFPacket) {
 	resp.WriteUint32(0x1000005)
 	resp.WriteUint8(0)
 	// response is end timestamp based on input
-	if(pkt.BoostWeekUsed == 1){
+	if pkt.BoostWeekUsed == 1 {
 		resp.WriteUint32(uint32(t.Add(120 * time.Minute).Unix())) // Week 1 Timestamp, Festi start?
-	} else if(pkt.BoostWeekUsed == 2){
+	} else if pkt.BoostWeekUsed == 2 {
 		resp.WriteUint32(uint32(t.Add(240 * time.Minute).Unix())) // Week 1 Timestamp, Festi start?
-	} else if(pkt.BoostWeekUsed == 3){
+	} else if pkt.BoostWeekUsed == 3 {
 		resp.WriteUint32(uint32(t.Add(120 * time.Minute).Unix())) // Week 1 Timestamp, Festi start?
-	} else if(pkt.BoostWeekUsed == 4){
+	} else if pkt.BoostWeekUsed == 4 {
 		resp.WriteUint32(uint32(t.Add(180 * time.Hour).Unix())) // Week 1 Timestamp, Festi start?
-	} else if(pkt.BoostWeekUsed == 5){
+	} else if pkt.BoostWeekUsed == 5 {
 		resp.WriteUint32(uint32(t.Add(240 * time.Hour).Unix())) // Week 1 Timestamp, Festi start?
 	}
-  s.QueueAck(pkt.AckHandle, resp.Data())
+	s.QueueAck(pkt.AckHandle, resp.Data())
 }
 
 func handleMsgMhfGetUdSchedule(s *Session, p mhfpacket.MHFPacket) {
