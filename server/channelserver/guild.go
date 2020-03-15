@@ -1,34 +1,36 @@
 package channelserver
 
-import "fmt"
+import (
+	"fmt"
+	"time"
+)
 
 type Guild struct {
 	ID          int
 	Name        string
 	Message     string
-	CreatedAt   uint32
+	CreatedAt   time.Time
 	MemberCount int
-	Leader      GuildMember
+	Leader      *GuildMember
 }
 
 type GuildMember struct {
 	GuildID  uint32
 	CharID   uint32
-	JoinedAt uint32
+	JoinedAt time.Time
 	Name     string
 }
 
-func GetGuildByCharacterId(s *Session, charID uint32) (*Guild, error) {
+func GetGuildInfoByCharacterId(s *Session, charID uint32) (*Guild, error) {
 	result, err := s.server.db.Query(`
-		SELECT g.id, gc.name, created_at, (
-		    SELECT count(1) FROM guild_characters gc WHERE gc.guild_id = g.id 
-		) AS member_count, leader.id, leader.name
+		SELECT g.id, g.name, created_at, (
+			SELECT count(1) FROM guild_characters gc WHERE gc.guild_id = g.id
+		) AS member_count, leader_id, lc.name as leader_name, lgc.joined_at as leader_joined
 		FROM guilds g
-		    JOIN (
-		    	SELECT id, name from characters c WHERE c.id = g.leader_id
-			) as leader
-			INNER JOIN guild_characters gc
-				ON g.id = gc.guild_id AND gc.character_id = $1
+				 JOIN guild_characters lgc ON lgc.character_id = leader_id
+				 JOIN characters lc on leader_id = lc.id
+				 JOIN guild_characters gc
+					  ON g.id = gc.guild_id AND gc.character_id = $1
 		LIMIT 1
 	`, charID)
 
@@ -44,12 +46,12 @@ func GetGuildByCharacterId(s *Session, charID uint32) (*Guild, error) {
 	}
 
 	guild := &Guild{
-		Leader: GuildMember{},
+		Leader: &GuildMember{},
 	}
 
 	err = result.Scan(
 		&guild.ID, &guild.Name, &guild.CreatedAt, &guild.MemberCount,
-		&guild.Leader.CharID, &guild.Leader.Name,
+		&guild.Leader.CharID, &guild.Leader.Name, &guild.Leader.JoinedAt,
 	)
 
 	guild.Leader.GuildID = uint32(guild.ID)

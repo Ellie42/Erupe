@@ -1409,10 +1409,16 @@ func handleMsgMhfOperateGuildMember(s *Session, p mhfpacket.MHFPacket) {}
 func handleMsgMhfInfoGuild(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfInfoGuild)
 
-	if guild, err := GetGuildByCharacterId(s, s.charID); err != nil && guild != nil {
+	if guild, err := GetGuildInfoByCharacterId(s, s.charID); err == nil && guild != nil {
 		characterGuildData, err := GetCharacterGuildData(s, s.charID)
 
 		if err != nil {
+			// REALLY large/complex format... stubbing it out here for simplicity.
+			resp := byteframe.NewByteFrame()
+			resp.WriteUint32(0) // Count
+			resp.WriteUint8(0)  // Unk, read if count == 0.
+
+			doSizedAckResp(s, pkt.AckHandle, resp.Data())
 			return
 		}
 
@@ -1430,14 +1436,16 @@ func handleMsgMhfInfoGuild(s *Session, p mhfpacket.MHFPacket) {
 
 		bf.WriteUint16(0x01) // Unk appears to be static
 
-		bf.WriteUint32(guild.CreatedAt)
-		bf.WriteUint32(characterGuildData.JoinedAt)
+		guildMessage := fmt.Sprintf("%s\x00", guild.Message)
+
+		bf.WriteUint32(uint32(guild.CreatedAt.Unix()))
+		bf.WriteUint32(uint32(characterGuildData.JoinedAt.Unix()))
 		bf.WriteUint8(uint8(len(guild.Name)))
-		bf.WriteUint8(uint8(len(guild.Message)))
+		bf.WriteUint8(uint8(len(guildMessage)))
 		bf.WriteUint8(uint8(5)) // Length of unknown string below
 		bf.WriteUint8(uint8(len(guild.Leader.Name)))
 		bf.WriteBytes([]byte(guild.Name))
-		bf.WriteBytes([]byte(guild.Message))
+		bf.WriteBytes([]byte(guildMessage))
 		bf.WriteBytes([]byte{0xFF, 0x00, 0x00, 0x00, 0x00}) // Unk string
 		bf.WriteBytes([]byte(guild.Leader.Name))
 		bf.WriteBytes([]byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x02, 0x00, 0x00, 0x00, 0x00}) // Unk
@@ -1476,15 +1484,7 @@ func handleMsgMhfInfoGuild(s *Session, p mhfpacket.MHFPacket) {
 			AckData:   bfWrapper.Data(),
 		}
 
-		ackMessage := byteframe.NewByteFrame()
-		ackMessage.WriteUint16(uint16(pkt.Opcode()))
-
-		// Build the packet onto the byteframe.
-		ack.Build(ackMessage)
-
-		hex.Dump(ackMessage.Data())
-
-		//s.QueueSendMHF(ack)
+		s.QueueSendMHF(ack)
 	} else {
 		// REALLY large/complex format... stubbing it out here for simplicity.
 		resp := byteframe.NewByteFrame()
