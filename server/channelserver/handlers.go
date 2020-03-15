@@ -2484,14 +2484,8 @@ func handleMsgMhfGetGuildWeeklyBonusMaster(s *Session, p mhfpacket.MHFPacket) {
 func handleMsgMhfGetGuildWeeklyBonusActiveCount(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfGetGuildWeeklyBonusActiveCount)
 
-	bf := byteframe.NewByteFrame()
-
 	// Values taken from brand new guild capture
-	for i := 0; i < 3; i++ {
-		bf.WriteUint8(0x0)
-	}
-
-	doSizedAckResp(s, pkt.AckHandle, bf.Data())
+	doSizedAckResp(s, pkt.AckHandle, make([]byte, 0x03))
 }
 
 func handleMsgMhfAddGuildWeeklyBonusExceptionalUser(s *Session, p mhfpacket.MHFPacket) {}
