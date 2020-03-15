@@ -1563,14 +1563,15 @@ func handleMsgMhfEnumerateGuildMember(s *Session, p mhfpacket.MHFPacket) {
 	guild, err := GetGuildInfoByCharacterId(s, s.charID)
 
 	if err != nil || guild == nil {
-		s.logger.Warn("failed to retrieve guild")
+		s.logger.Warn("failed to retrieve guild sending no result message")
+		stubEnumerateNoResults(s, pkt.AckHandle)
 		return
 	}
 
 	guildMembers, err := GetGuildMembers(s, guild.ID, guild.MemberCount)
 
 	if err != nil {
-		s.logger.Warn("failed to retrieve guild")
+		s.logger.Error("failed to retrieve guild")
 		return
 	}
 
@@ -2272,14 +2273,8 @@ func handleMsgMhfGetGuildMissionList(s *Session, p mhfpacket.MHFPacket) {}
 func handleMsgMhfGetGuildMissionRecord(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfGetGuildMissionRecord)
 
-	bf := byteframe.NewByteFrame()
-
 	// No guild mission records = 0x190 empty bytes
-	for i := 0; i < 0x190; i++ {
-		bf.WriteUint8(0x0)
-	}
-
-	doSizedAckResp(s, pkt.AckHandle, bf.Data())
+	doSizedAckResp(s, pkt.AckHandle, make([]byte, 0x190))
 }
 
 func handleMsgMhfAddGuildMissionCount(s *Session, p mhfpacket.MHFPacket) {}
@@ -2496,14 +2491,8 @@ func handleMsgMhfRegistSpabiTime(s *Session, p mhfpacket.MHFPacket) {}
 func handleMsgMhfGetGuildWeeklyBonusMaster(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfGetGuildWeeklyBonusMaster)
 
-	bf := byteframe.NewByteFrame()
-
 	// Values taken from brand new guild capture
-	for i := 0; i < 0x28; i++ {
-		bf.WriteUint8(0x0)
-	}
-
-	doSizedAckResp(s, pkt.AckHandle, bf.Data())
+	doSizedAckResp(s, pkt.AckHandle, make([]byte, 0x28))
 }
 func handleMsgMhfGetGuildWeeklyBonusActiveCount(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfGetGuildWeeklyBonusActiveCount)
