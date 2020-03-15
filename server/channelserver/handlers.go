@@ -1414,7 +1414,6 @@ func handleMsgMhfInfoGuild(s *Session, p mhfpacket.MHFPacket) {
 		characterGuildData, err := GetCharacterGuildData(s, s.charID)
 
 		if err != nil {
-			// REALLY large/complex format... stubbing it out here for simplicity.
 			resp := byteframe.NewByteFrame()
 			resp.WriteUint32(0) // Count
 			resp.WriteUint8(0)  // Unk, read if count == 0.
@@ -1428,9 +1427,9 @@ func handleMsgMhfInfoGuild(s *Session, p mhfpacket.MHFPacket) {
 		bf := byteframe.NewByteFrame()
 
 		bf.WriteUint32(uint32(guild.ID))
-		bf.WriteUint32(s.charID) // Not 100% which character this ID is supposed to belong to
-		bf.WriteUint16(0x0)      // Guild festival ranking (I think)
-		bf.WriteUint16(uint16(guild.MemberCount))
+		bf.WriteUint32(guild.Leader.CharID)
+		bf.WriteUint16(0x0) // Guild festival ranking (I think)
+		bf.WriteUint16(guild.MemberCount)
 
 		// Unk appears to be static
 		bf.WriteBytes([]byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
@@ -2635,7 +2634,30 @@ func handleMsgMhfPostTinyBin(s *Session, p mhfpacket.MHFPacket) {}
 
 func handleMsgMhfGetSenyuDailyCount(s *Session, p mhfpacket.MHFPacket) {}
 
-func handleMsgMhfGetGuildTargetMemberNum(s *Session, p mhfpacket.MHFPacket) {}
+func handleMsgMhfGetGuildTargetMemberNum(s *Session, p mhfpacket.MHFPacket) {
+	pkt := p.(*mhfpacket.MsgMhfGetGuildTargetMemberNum)
+
+	var guild *Guild
+	var err error
+
+	if pkt.GuildID == 0x0 {
+		guild, err = GetGuildInfoByCharacterId(s, s.charID)
+	} else {
+		guild, err = GetGuildInfoByID(s, pkt.GuildID)
+	}
+
+	if err != nil || guild == nil {
+		s.logger.Warn("failed to find guild")
+		return
+	}
+
+	bf := byteframe.NewByteFrame()
+
+	bf.WriteUint16(0x0)
+	bf.WriteUint16(guild.MemberCount - 1)
+
+	doSizedAckResp(s, pkt.AckHandle, bf.Data())
+}
 
 func handleMsgMhfGetBoostRight(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfGetBoostRight)
@@ -2694,9 +2716,37 @@ func handleMsgMhfCancelGuildScout(s *Session, p mhfpacket.MHFPacket) {}
 
 func handleMsgMhfAnswerGuildScout(s *Session, p mhfpacket.MHFPacket) {}
 
-func handleMsgMhfGetGuildScoutList(s *Session, p mhfpacket.MHFPacket) {}
+func handleMsgMhfGetGuildScoutList(s *Session, p mhfpacket.MHFPacket) {
+	pkt := p.(*mhfpacket.MsgMhfGetGuildScoutList)
 
-func handleMsgMhfGetGuildManageRight(s *Session, p mhfpacket.MHFPacket) {}
+	// No scouting allowed
+	doSizedAckResp(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
+}
+
+func handleMsgMhfGetGuildManageRight(s *Session, p mhfpacket.MHFPacket) {
+	pkt := p.(*mhfpacket.MsgMhfGetGuildManageRight)
+
+	guild, err := GetGuildInfoByCharacterId(s, s.charID)
+
+	if err != nil {
+		s.logger.Warn("failed to respond to manage rights message")
+		return
+	}
+
+	bf := byteframe.NewByteFrame()
+
+	bf.WriteUint16(0x00) // Unk
+	bf.WriteUint16(guild.MemberCount)
+
+	members, err := GetGuildMembers(s, guild.ID, guild.MemberCount)
+
+	for _, member := range members {
+		bf.WriteUint32(member.CharID)
+		bf.WriteUint32(0x0)
+	}
+
+	doSizedAckResp(s, pkt.AckHandle, bf.Data())
+}
 
 func handleMsgMhfSetGuildManageRight(s *Session, p mhfpacket.MHFPacket) {}
 
