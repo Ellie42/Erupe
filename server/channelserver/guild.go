@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"github.com/jmoiron/sqlx"
+	"go.uber.org/zap"
 	"time"
 )
 
@@ -31,12 +32,12 @@ func GetGuildInfoByID(s *Session, guildID uint32) (*Guild, error) {
 		FROM guilds g
 				 JOIN guild_characters lgc ON lgc.character_id = leader_id
 				 JOIN characters lc on leader_id = lc.id
-		WHERE g.id == $1 
+		WHERE g.id = $1 
 		LIMIT 1
 	`, guildID)
 
 	if err != nil {
-		s.logger.Error(fmt.Sprintf("failed to retrieve guild '%d'", guildID))
+		s.logger.Error("failed to retrieve guild", zap.Error(err), zap.Uint32("guildID", guildID))
 		return nil, err
 	}
 
@@ -57,7 +58,7 @@ func GetGuildInfoByCharacterId(s *Session, charID uint32) (*Guild, error) {
 	`, charID)
 
 	if err != nil {
-		s.logger.Error(fmt.Sprintf("failed to retrieve guild for character '%d'", charID))
+		s.logger.Error("failed to retrieve guild for character", zap.Error(err), zap.Uint32("charID", charID))
 		return nil, err
 	}
 
@@ -75,7 +76,7 @@ func GetGuildMembers(s *Session, guildID uint32, memberCount uint16) ([]*GuildMe
 	`, guildID)
 
 	if err != nil {
-		s.logger.Error(fmt.Sprintf("failed to retrieve membership data for guild '%d'", guildID))
+		s.logger.Error("failed to retrieve membership data for guild", zap.Error(err), zap.Uint32("guildID", guildID))
 		return nil, err
 	}
 
@@ -119,7 +120,7 @@ func buildGuildObjectFromDbResult(result *sql.Rows, err error, s *Session) (*Gui
 	guild.Leader.JoinedAt = guild.CreatedAt
 
 	if err != nil {
-		s.logger.Error("failed to retrieve guild data from database")
+		s.logger.Error("failed to retrieve guild data from database", zap.Error(err))
 		return nil, err
 	}
 
@@ -151,13 +152,49 @@ func GetCharacterGuildData(s *Session, charID uint32) (*GuildMember, error) {
 	return buildGuildMemberObjectFromDBResult(rows, err, s)
 }
 
+func DisbandGuild(s *Session, guildID uint32) error {
+	transaction, err := s.server.db.Begin()
+
+	if err != nil {
+		s.logger.Error("failed to begin transaction", zap.Error(err))
+		return err
+	}
+
+	_, err = transaction.Exec("DELETE FROM guild_characters WHERE guild_id = $1", guildID)
+
+	if err != nil {
+		s.logger.Error("failed to remove guild characters", zap.Error(err), zap.Uint32("guildId", guildID))
+		rollbackTransaction(s, transaction)
+		return err
+	}
+
+	_, err = transaction.Exec("DELETE FROM guilds WHERE id = $1", guildID)
+
+	if err != nil {
+		s.logger.Error("failed to remove guild", zap.Error(err), zap.Uint32("guildID", guildID))
+		rollbackTransaction(s, transaction)
+		return err
+	}
+
+	err = transaction.Commit()
+
+	if err != nil {
+		s.logger.Error("failed to commit transaction", zap.Error(err))
+		return err
+	}
+
+	s.logger.Info("Character disbanded guild", zap.Uint32("charID", s.charID), zap.Uint32("guildID", guildID))
+
+	return nil
+}
+
 func buildGuildMemberObjectFromDBResult(rows *sqlx.Rows, err error, s *Session) (*GuildMember, error) {
 	memberData := &GuildMember{}
 
 	err = rows.Scan(&memberData.GuildID, &memberData.JoinedAt, &memberData.Name, &memberData.CharID)
 
 	if err != nil {
-		s.logger.Error("failed to retrieve guild data from database")
+		s.logger.Error("failed to retrieve guild data from database", zap.Error(err))
 		return nil, err
 	}
 
@@ -168,7 +205,7 @@ func CreateGuild(s *Session, guildName string) (int32, error) {
 	transaction, err := s.server.db.Begin()
 
 	if err != nil {
-		s.logger.Error("failed to start db transaction")
+		s.logger.Error("failed to start db transaction", zap.Error(err))
 		return 0, err
 	}
 
@@ -178,8 +215,8 @@ func CreateGuild(s *Session, guildName string) (int32, error) {
 	)
 
 	if err != nil {
-		s.logger.Error("failed to create guild")
-		rollbackTransaction(err, transaction, s)
+		s.logger.Error("failed to create guild", zap.Error(err))
+		rollbackTransaction(s, transaction)
 		return 0, err
 	}
 
@@ -190,16 +227,16 @@ func CreateGuild(s *Session, guildName string) (int32, error) {
 	err = guildResult.Scan(&guildId)
 
 	if err != nil {
-		s.logger.Error("failed to retrieve guild ID")
-		rollbackTransaction(err, transaction, s)
+		s.logger.Error("failed to retrieve guild ID", zap.Error(err))
+		rollbackTransaction(s, transaction)
 		return 0, err
 	}
 
 	err = guildResult.Close()
 
 	if err != nil {
-		s.logger.Error("failed to finalise query")
-		rollbackTransaction(err, transaction, s)
+		s.logger.Error("failed to finalise query", zap.Error(err))
+		rollbackTransaction(s, transaction)
 		return 0, err
 	}
 
@@ -209,25 +246,25 @@ func CreateGuild(s *Session, guildName string) (int32, error) {
 	`, guildId, s.charID)
 
 	if err != nil {
-		s.logger.Error("failed to add character to guild")
-		rollbackTransaction(err, transaction, s)
+		s.logger.Error("failed to add character to guild", zap.Error(err))
+		rollbackTransaction(s, transaction)
 		return 0, err
 	}
 
 	err = transaction.Commit()
 
 	if err != nil {
-		s.logger.Error("failed to commit guild creation")
+		s.logger.Error("failed to commit guild creation", zap.Error(err))
 		return 0, err
 	}
 
 	return guildId, nil
 }
 
-func rollbackTransaction(err error, transaction *sql.Tx, s *Session) {
-	err = transaction.Rollback()
+func rollbackTransaction(s *Session, transaction *sql.Tx) {
+	err := transaction.Rollback()
 
 	if err != nil {
-		s.logger.Error("failed to rollback transaction")
+		s.logger.Error("failed to rollback transaction", zap.Error(err))
 	}
 }
