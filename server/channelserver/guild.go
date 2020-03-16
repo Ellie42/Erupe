@@ -24,6 +24,41 @@ type GuildMember struct {
 	Name     string
 }
 
+func FindGuildsByName(s *Session, name string) ([]*Guild, error) {
+	searchTerm := fmt.Sprintf("%%%s%%", name)
+
+	rows, err := s.server.db.Query(`
+		SELECT g.id, g.name, created_at, (
+			SELECT count(1) FROM guild_characters gc WHERE gc.guild_id = g.id
+		) AS member_count, leader_id, lc.name as leader_name, lgc.joined_at as leader_joined
+		FROM guilds g
+				 JOIN guild_characters lgc ON lgc.character_id = leader_id
+				 JOIN characters lc on leader_id = lc.id
+		WHERE g.name ILIKE $1
+	`, searchTerm)
+
+	if err != nil {
+		s.logger.Error("failed to find guilds for search term", zap.Error(err), zap.String("searchTerm", name))
+		return nil, err
+	}
+
+	defer rows.Close()
+
+	guilds := make([]*Guild, 0)
+
+	for rows.Next() {
+		guild, err := buildGuildObjectFromDbResult(rows, err, s)
+
+		if err != nil {
+			return nil, err
+		}
+
+		guilds = append(guilds, guild)
+	}
+
+	return guilds, nil
+}
+
 func GetGuildInfoByID(s *Session, guildID uint32) (*Guild, error) {
 	rows, err := s.server.db.Query(`
 		SELECT g.id, g.name, created_at, (
@@ -39,6 +74,12 @@ func GetGuildInfoByID(s *Session, guildID uint32) (*Guild, error) {
 	if err != nil {
 		s.logger.Error("failed to retrieve guild", zap.Error(err), zap.Uint32("guildID", guildID))
 		return nil, err
+	}
+
+	hasRow := rows.Next()
+
+	if !hasRow {
+		return nil, nil
 	}
 
 	return buildGuildObjectFromDbResult(rows, err, s)
@@ -63,6 +104,12 @@ func GetGuildInfoByCharacterId(s *Session, charID uint32) (*Guild, error) {
 	}
 
 	defer rows.Close()
+
+	hasRow := rows.Next()
+
+	if !hasRow {
+		return nil, nil
+	}
 
 	return buildGuildObjectFromDbResult(rows, err, s)
 }
@@ -101,12 +148,6 @@ func GetGuildMembers(s *Session, guildID uint32, memberCount uint16) ([]*GuildMe
 }
 
 func buildGuildObjectFromDbResult(result *sql.Rows, err error, s *Session) (*Guild, error) {
-	hasRow := result.Next()
-
-	if !hasRow {
-		return nil, nil
-	}
-
 	guild := &Guild{
 		Leader: &GuildMember{},
 	}

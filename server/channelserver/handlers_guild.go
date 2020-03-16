@@ -1,6 +1,7 @@
 package channelserver
 
 import (
+	"encoding/binary"
 	"fmt"
 	"github.com/Andoryuuta/Erupe/network/mhfpacket"
 	"github.com/Andoryuuta/byteframe"
@@ -76,8 +77,23 @@ func handleMsgMhfOperateGuildMember(s *Session, p mhfpacket.MHFPacket) {}
 func handleMsgMhfInfoGuild(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfInfoGuild)
 
-	if guild, err := GetGuildInfoByCharacterId(s, s.charID); err == nil && guild != nil {
+	var guild *Guild
+	var err error
+
+	if pkt.GuildID > 0 {
+		guild, err = GetGuildInfoByID(s, pkt.GuildID)
+	} else {
+		guild, err = GetGuildInfoByCharacterId(s, s.charID)
+	}
+
+	if err == nil && guild != nil {
 		characterGuildData, err := GetCharacterGuildData(s, s.charID)
+
+		characterJoinedAt := uint32(0)
+
+		if characterGuildData != nil {
+			characterJoinedAt = uint32(characterGuildData.JoinedAt.Unix())
+		}
 
 		if err != nil {
 			resp := byteframe.NewByteFrame()
@@ -103,7 +119,7 @@ func handleMsgMhfInfoGuild(s *Session, p mhfpacket.MHFPacket) {
 		guildMainMotto := fmt.Sprintf("%s\x00", guild.MainMotto)
 
 		bf.WriteUint32(uint32(guild.CreatedAt.Unix()))
-		bf.WriteUint32(uint32(characterGuildData.JoinedAt.Unix()))
+		bf.WriteUint32(characterJoinedAt)
 		bf.WriteUint8(uint8(len(guild.Name)))
 		bf.WriteUint8(uint8(len(guildMainMotto)))
 		bf.WriteUint8(uint8(5)) // Length of unknown string below
@@ -147,7 +163,57 @@ func handleMsgMhfInfoGuild(s *Session, p mhfpacket.MHFPacket) {
 	}
 }
 
-func handleMsgMhfEnumerateGuild(s *Session, p mhfpacket.MHFPacket) {}
+func handleMsgMhfEnumerateGuild(s *Session, p mhfpacket.MHFPacket) {
+	pkt := p.(*mhfpacket.MsgMhfEnumerateGuild)
+
+	var guilds []*Guild
+	var err error
+
+	switch pkt.Type {
+	case mhfpacket.ENUMERATE_GUILD_TYPE_NAME:
+		// I have no idea if is really little endian, but it seems too weird to have a random static
+		// 0x00 before the string
+		searchTermLength := binary.LittleEndian.Uint16(pkt.RawDataPayload[9:11])
+		searchTerm := pkt.RawDataPayload[11 : 11+searchTermLength]
+
+		guilds, err = FindGuildsByName(s, stripNullTerminator(string(searchTerm)))
+	default:
+		panic(fmt.Sprintf("no handler for guild search type '%d'", pkt.Type))
+	}
+
+	if err != nil || guilds == nil {
+		stubEnumerateNoResults(s, pkt.AckHandle)
+		return
+	}
+
+	bf := byteframe.NewByteFrame()
+	bf.WriteUint16(uint16(len(guilds)))
+
+	for _, guild := range guilds {
+		bf.WriteUint8(0x00) // Unk
+		bf.WriteUint32(guild.ID)
+		bf.WriteUint32(guild.Leader.CharID)
+		bf.WriteUint16(guild.MemberCount)
+		bf.WriteUint8(0x00)  // Unk
+		bf.WriteUint8(0x00)  // Unk
+		bf.WriteUint16(0x00) // Rank
+		bf.WriteUint32(uint32(guild.CreatedAt.Unix()))
+
+		guildName := fmt.Sprintf("%s\x00", guild.Name)
+		leaderName := fmt.Sprintf("%s\x00", guild.Leader.Name)
+
+		bf.WriteUint8(uint8(len(guildName)))
+		bf.WriteBytes([]byte(guildName))
+		bf.WriteUint8(uint8(len(leaderName)))
+		bf.WriteBytes([]byte(leaderName))
+		bf.WriteUint8(0x01)
+	}
+
+	bf.WriteUint8(0x01)
+	bf.WriteUint8(0x00)
+
+	doSizedAckResp(s, pkt.AckHandle, bf.Data())
+}
 
 func handleMsgMhfUpdateGuild(s *Session, p mhfpacket.MHFPacket) {}
 
