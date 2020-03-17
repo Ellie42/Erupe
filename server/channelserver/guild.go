@@ -18,24 +18,29 @@ type Guild struct {
 }
 
 type GuildMember struct {
-	GuildID  uint32
-	CharID   uint32
-	JoinedAt time.Time
-	Name     string
+	GuildID     uint32
+	CharID      uint32
+	JoinedAt    time.Time
+	Name        string
+	IsApplicant bool
 }
+
+const guildInfoSelectQuery = `
+		SELECT g.id, g.name, created_at, (
+			SELECT count(1) FROM guild_characters gc WHERE gc.guild_id = g.id AND gc.is_applicant = false
+		) AS member_count, leader_id, lc.name as leader_name, lgc.joined_at as leader_joined 
+			FROM guilds g
+					 JOIN guild_characters lgc ON lgc.character_id = leader_id
+					 JOIN characters lc on leader_id = lc.id
+`
 
 func FindGuildsByName(s *Session, name string) ([]*Guild, error) {
 	searchTerm := fmt.Sprintf("%%%s%%", name)
 
-	rows, err := s.server.db.Query(`
-		SELECT g.id, g.name, created_at, (
-			SELECT count(1) FROM guild_characters gc WHERE gc.guild_id = g.id
-		) AS member_count, leader_id, lc.name as leader_name, lgc.joined_at as leader_joined
-		FROM guilds g
-				 JOIN guild_characters lgc ON lgc.character_id = leader_id
-				 JOIN characters lc on leader_id = lc.id
+	rows, err := s.server.db.Query(fmt.Sprintf(`
+		%s
 		WHERE g.name ILIKE $1
-	`, searchTerm)
+	`, guildInfoSelectQuery), searchTerm)
 
 	if err != nil {
 		s.logger.Error("failed to find guilds for search term", zap.Error(err), zap.String("searchTerm", name))
@@ -60,16 +65,11 @@ func FindGuildsByName(s *Session, name string) ([]*Guild, error) {
 }
 
 func GetGuildInfoByID(s *Session, guildID uint32) (*Guild, error) {
-	rows, err := s.server.db.Query(`
-		SELECT g.id, g.name, created_at, (
-			SELECT count(1) FROM guild_characters gc WHERE gc.guild_id = g.id
-		) AS member_count, leader_id, lc.name as leader_name, lgc.joined_at as leader_joined
-		FROM guilds g
-				 JOIN guild_characters lgc ON lgc.character_id = leader_id
-				 JOIN characters lc on leader_id = lc.id
+	rows, err := s.server.db.Query(fmt.Sprintf(`
+		%s
 		WHERE g.id = $1 
 		LIMIT 1
-	`, guildID)
+	`, guildInfoSelectQuery), guildID)
 
 	if err != nil {
 		s.logger.Error("failed to retrieve guild", zap.Error(err), zap.Uint32("guildID", guildID))
@@ -86,17 +86,12 @@ func GetGuildInfoByID(s *Session, guildID uint32) (*Guild, error) {
 }
 
 func GetGuildInfoByCharacterId(s *Session, charID uint32) (*Guild, error) {
-	rows, err := s.server.db.Query(`
-		SELECT g.id, g.name, created_at, (
-			SELECT count(1) FROM guild_characters gc WHERE gc.guild_id = g.id
-		) AS member_count, leader_id, lc.name as leader_name, lgc.joined_at as leader_joined
-		FROM guilds g
-				 JOIN guild_characters lgc ON lgc.character_id = leader_id
-				 JOIN characters lc on leader_id = lc.id
-				 JOIN guild_characters gc
-					  ON g.id = gc.guild_id AND gc.character_id = $1
+	rows, err := s.server.db.Query(fmt.Sprintf(`
+		%s
+		 JOIN guild_characters gc
+			  ON g.id = gc.guild_id AND gc.character_id = $1
 		LIMIT 1
-	`, charID)
+	`, guildInfoSelectQuery), charID)
 
 	if err != nil {
 		s.logger.Error("failed to retrieve guild for character", zap.Error(err), zap.Uint32("charID", charID))
@@ -116,10 +111,10 @@ func GetGuildInfoByCharacterId(s *Session, charID uint32) (*Guild, error) {
 
 func GetGuildMembers(s *Session, guildID uint32, memberCount uint16) ([]*GuildMember, error) {
 	rows, err := s.server.db.Queryx(`
-		SELECT guild_id, joined_at, name, gc.character_id
+		SELECT guild_id, joined_at, name, gc.character_id, gc.is_applicant
 			FROM guild_characters gc
 				JOIN characters c on gc.character_id = c.id
-			WHERE guild_id = $1
+			WHERE guild_id = $1 AND is_applicant = false
 	`, guildID)
 
 	if err != nil {
@@ -170,7 +165,7 @@ func buildGuildObjectFromDbResult(result *sql.Rows, err error, s *Session) (*Gui
 
 func GetCharacterGuildData(s *Session, charID uint32) (*GuildMember, error) {
 	rows, err := s.server.db.Queryx(`
-		SELECT guild_id, joined_at, name, character_id
+		SELECT guild_id, joined_at, name, character_id, gc.is_applicant
 			FROM guild_characters gc
 				JOIN characters c on gc.character_id = c.id
 			WHERE character_id=$1
@@ -193,7 +188,26 @@ func GetCharacterGuildData(s *Session, charID uint32) (*GuildMember, error) {
 	return buildGuildMemberObjectFromDBResult(rows, err, s)
 }
 
-func DisbandGuild(s *Session, guildID uint32) error {
+func (guild *Guild) Apply(s *Session, charID uint32) error {
+	_, err := s.server.db.Exec(`
+		INSERT INTO guild_characters (guild_id, character_id, is_applicant)
+		VALUES ($1, $2, true)
+	`, guild.ID, charID)
+
+	if err != nil {
+		s.logger.Error(
+			"failed to add applicant to guild",
+			zap.Error(err),
+			zap.Uint32("guildID", guild.ID),
+			zap.Uint32("charID", charID),
+		)
+		return err
+	}
+
+	return nil
+}
+
+func (guild *Guild) Disband(s *Session) error {
 	transaction, err := s.server.db.Begin()
 
 	if err != nil {
@@ -201,18 +215,18 @@ func DisbandGuild(s *Session, guildID uint32) error {
 		return err
 	}
 
-	_, err = transaction.Exec("DELETE FROM guild_characters WHERE guild_id = $1", guildID)
+	_, err = transaction.Exec("DELETE FROM guild_characters WHERE guild_id = $1", guild.ID)
 
 	if err != nil {
-		s.logger.Error("failed to remove guild characters", zap.Error(err), zap.Uint32("guildId", guildID))
+		s.logger.Error("failed to remove guild characters", zap.Error(err), zap.Uint32("guildId", guild.ID))
 		rollbackTransaction(s, transaction)
 		return err
 	}
 
-	_, err = transaction.Exec("DELETE FROM guilds WHERE id = $1", guildID)
+	_, err = transaction.Exec("DELETE FROM guilds WHERE id = $1", guild.ID)
 
 	if err != nil {
-		s.logger.Error("failed to remove guild", zap.Error(err), zap.Uint32("guildID", guildID))
+		s.logger.Error("failed to remove guild", zap.Error(err), zap.Uint32("guildID", guild.ID))
 		rollbackTransaction(s, transaction)
 		return err
 	}
@@ -224,7 +238,24 @@ func DisbandGuild(s *Session, guildID uint32) error {
 		return err
 	}
 
-	s.logger.Info("Character disbanded guild", zap.Uint32("charID", s.charID), zap.Uint32("guildID", guildID))
+	s.logger.Info("Character disbanded guild", zap.Uint32("charID", s.charID), zap.Uint32("guildID", guild.ID))
+
+	return nil
+}
+
+func (guild *Guild) RemoveCharacter(s *Session, charID uint32) error {
+	_, err := s.server.db.Exec("DELETE FROM guild_characters WHERE character_id=$1", charID)
+
+	if err != nil {
+		s.logger.Error(
+			"failed to remove character from guild",
+			zap.Error(err),
+			zap.Uint32("charID", charID),
+			zap.Uint32("guildID", guild.ID),
+		)
+
+		return err
+	}
 
 	return nil
 }
@@ -232,7 +263,7 @@ func DisbandGuild(s *Session, guildID uint32) error {
 func buildGuildMemberObjectFromDBResult(rows *sqlx.Rows, err error, s *Session) (*GuildMember, error) {
 	memberData := &GuildMember{}
 
-	err = rows.Scan(&memberData.GuildID, &memberData.JoinedAt, &memberData.Name, &memberData.CharID)
+	err = rows.Scan(&memberData.GuildID, &memberData.JoinedAt, &memberData.Name, &memberData.CharID, &memberData.IsApplicant)
 
 	if err != nil {
 		s.logger.Error("failed to retrieve guild data from database", zap.Error(err))

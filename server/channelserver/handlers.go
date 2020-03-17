@@ -2779,7 +2779,12 @@ func handleMsgMhfGetUdBonusQuestInfo(s *Session, p mhfpacket.MHFPacket) {
 	doSizedAckResp(s, pkt.AckHandle, resp.Data())
 }
 
-func handleMsgMhfGetUdSelectedColorInfo(s *Session, p mhfpacket.MHFPacket) {}
+func handleMsgMhfGetUdSelectedColorInfo(s *Session, p mhfpacket.MHFPacket) {
+	pkt := p.(*mhfpacket.MsgMhfGetUdSelectedColorInfo)
+
+	// Unk
+	doSizedAckResp(s, pkt.AckHandle, []byte{0x00, 0x01, 0x01, 0x01, 0x02, 0x03, 0x02, 0x00, 0x00})
+}
 
 func handleMsgMhfGetUdMonsterPoint(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfGetUdMonsterPoint)
@@ -2949,10 +2954,6 @@ func handleMsgMhfAcquireMonthlyReward(s *Session, p mhfpacket.MHFPacket) {
 
 	doSizedAckResp(s, pkt.AckHandle, resp.Data())
 }
-
-func handleMsgMhfGetUdGuildMapInfo(s *Session, p mhfpacket.MHFPacket) {}
-
-func handleMsgMhfGenerateUdGuildMap(s *Session, p mhfpacket.MHFPacket) {}
 
 func handleMsgMhfGetUdTacticsPoint(s *Session, p mhfpacket.MHFPacket) {
 	// Diva defense interception points

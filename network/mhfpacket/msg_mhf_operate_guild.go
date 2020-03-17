@@ -8,9 +8,11 @@ import (
 type GuildOperateAction uint8
 
 const (
-	GUILD_OPERATE_DISBAND = 0x01
-	GUILD_OPERATE_LEAVE   = 0x08
-	GUILD_OPERATE_UPGRADE = 0x0a
+	GUILD_OPERATE_DISBAND            = 0x01
+	GUILD_OPERATE_APPLY              = 0x02
+	GUILD_OPERATE_CANCEL_APPLICATION = 0x03
+	GUILD_OPERATE_LEAVE              = 0x08
+	GUILD_OPERATE_UPGRADE            = 0x0a
 )
 
 // MsgMhfOperateGuild represents the MSG_MHF_OPERATE_GUILD
