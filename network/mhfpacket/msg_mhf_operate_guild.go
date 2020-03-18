@@ -5,21 +5,21 @@ import (
 	"github.com/Andoryuuta/byteframe"
 )
 
-type GuildOperateAction uint8
+type OperateGuildAction uint8
 
 const (
-	GUILD_OPERATE_DISBAND            = 0x01
-	GUILD_OPERATE_APPLY              = 0x02
-	GUILD_OPERATE_CANCEL_APPLICATION = 0x03
-	GUILD_OPERATE_LEAVE              = 0x08
-	GUILD_OPERATE_UPGRADE            = 0x0a
+	OPERATE_GUILD_ACTION_DISBAND = 0x01
+	OPERATE_GUILD_ACTION_APPLY   = 0x02
+	OPERATE_GUILD_ACTION_LEAVE   = 0x03
+	OPERATE_GUILD_LEAVE          = 0x08
+	OPERATE_GUILD_UPGRADE        = 0x0a
 )
 
 // MsgMhfOperateGuild represents the MSG_MHF_OPERATE_GUILD
 type MsgMhfOperateGuild struct {
 	AckHandle uint32
 	GuildID   uint32
-	Action    GuildOperateAction
+	Action    OperateGuildAction
 	UnkData   []byte
 }
 
@@ -32,7 +32,7 @@ func (m *MsgMhfOperateGuild) Opcode() network.PacketID {
 func (m *MsgMhfOperateGuild) Parse(bf *byteframe.ByteFrame) error {
 	m.AckHandle = bf.ReadUint32()
 	m.GuildID = bf.ReadUint32()
-	m.Action = GuildOperateAction(bf.ReadUint8())
+	m.Action = OperateGuildAction(bf.ReadUint8())
 
 	return nil
 }

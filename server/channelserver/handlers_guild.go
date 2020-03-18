@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/Andoryuuta/Erupe/network/mhfpacket"
 	"github.com/Andoryuuta/byteframe"
+	"go.uber.org/zap"
 )
 
 func handleMsgMhfCreateGuild(s *Session, p mhfpacket.MHFPacket) {
@@ -47,7 +48,7 @@ func handleMsgMhfOperateGuild(s *Session, p mhfpacket.MHFPacket) {
 	bf := byteframe.NewByteFrame()
 
 	switch pkt.Action {
-	case mhfpacket.GUILD_OPERATE_DISBAND:
+	case mhfpacket.OPERATE_GUILD_ACTION_DISBAND:
 		if guild.Leader.CharID != s.charID {
 			s.logger.Warn(fmt.Sprintf("character '%d' is attempting to manage guild '%d' without permission", s.charID, guild.ID))
 			return
@@ -61,7 +62,7 @@ func handleMsgMhfOperateGuild(s *Session, p mhfpacket.MHFPacket) {
 		}
 
 		bf.WriteBytes([]byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, byte(response)})
-	case mhfpacket.GUILD_OPERATE_APPLY:
+	case mhfpacket.OPERATE_GUILD_ACTION_APPLY:
 		err = guild.Apply(s, s.charID)
 
 		if err != nil {
@@ -71,7 +72,7 @@ func handleMsgMhfOperateGuild(s *Session, p mhfpacket.MHFPacket) {
 			bf.WriteUint16(0x01)
 			bf.WriteUint32(guild.Leader.CharID)
 		}
-	case mhfpacket.GUILD_OPERATE_CANCEL_APPLICATION:
+	case mhfpacket.OPERATE_GUILD_ACTION_LEAVE:
 		err := guild.RemoveCharacter(s, s.charID)
 
 		response := 0x01
@@ -93,7 +94,58 @@ func handleMsgMhfOperateGuild(s *Session, p mhfpacket.MHFPacket) {
 	s.QueueSendMHF(ackMessage)
 }
 
-func handleMsgMhfOperateGuildMember(s *Session, p mhfpacket.MHFPacket) {}
+func handleMsgMhfOperateGuildMember(s *Session, p mhfpacket.MHFPacket) {
+	pkt := p.(*mhfpacket.MsgMhfOperateGuildMember)
+
+	sendResponse := func(success bool) {
+		response := byte(0x01)
+
+		if success {
+			response = 0x00
+		}
+
+		ack := &mhfpacket.MsgSysAck{
+			AckHandle: pkt.AckHandle,
+			// Testing values
+			AckData: []byte{response, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+		}
+
+		s.QueueSendMHF(ack)
+	}
+
+	guild, err := GetGuildInfoByCharacterId(s, pkt.CharID)
+
+	if err != nil || guild == nil {
+		sendResponse(false)
+		return
+	}
+
+	character, err := GetCharacterGuildData(s, pkt.CharID)
+
+	if err != nil || character == nil || (!character.IsSubLeader && guild.Leader.CharID != s.charID) {
+		sendResponse(false)
+		return
+	}
+
+	switch pkt.Action {
+	case mhfpacket.OPERATE_GUILD_MEMBER_ACTION_ACCEPT:
+		err = guild.AcceptCharacter(s, pkt.CharID)
+	case mhfpacket.OPERATE_GUILD_MEMBER_ACTION_REJECT:
+		err = guild.RemoveCharacter(s, pkt.CharID)
+	case mhfpacket.OPERATE_GUILD_MEMBER_ACTION_KICK:
+		err = guild.RemoveCharacter(s, pkt.CharID)
+	default:
+		sendResponse(false)
+		panic(fmt.Sprintf("unhandled operateGuildMember action '%d'", pkt.Action))
+	}
+
+	if err != nil {
+		sendResponse(false)
+		return
+	}
+
+	sendResponse(true)
+}
 
 func handleMsgMhfInfoGuild(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfInfoGuild)
@@ -129,17 +181,18 @@ func handleMsgMhfInfoGuild(s *Session, p mhfpacket.MHFPacket) {
 
 		bf.WriteUint32(guild.ID)
 		bf.WriteUint32(guild.Leader.CharID)
-		bf.WriteUint16(0x0) // Guild festival ranking (I think)
+		bf.WriteUint16(0x0) // Guild Rank?
 		bf.WriteUint16(guild.MemberCount)
 
 		// Unk appears to be static
 		bf.WriteBytes([]byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
 
-		// This next byte can also be 0x02
 		if characterGuildData == nil || characterGuildData.IsApplicant {
 			bf.WriteUint16(0x00)
-		} else {
+		} else if characterGuildData.IsSubLeader {
 			bf.WriteUint16(0x01)
+		} else {
+			bf.WriteUint16(0x02)
 		}
 
 		guildMainMotto := fmt.Sprintf("%s\x00", guild.MainMotto)
@@ -155,14 +208,11 @@ func handleMsgMhfInfoGuild(s *Session, p mhfpacket.MHFPacket) {
 
 		if characterGuildData != nil && !characterGuildData.IsApplicant {
 			bf.WriteUint8(0x01)
-			bf.WriteUint16(0x00) // Unk
-			bf.WriteUint16(0x00) // Unk
 		} else {
 			bf.WriteUint8(0xFF)
-			bf.WriteUint16(0x00) // Unk
-			bf.WriteUint16(0x00) // Unk
 		}
 
+		bf.WriteUint32(guild.RP)
 		bf.WriteBytes([]byte(guild.Leader.Name))
 		bf.WriteBytes([]byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x02, 0x00, 0x00, 0x00, 0x00}) // Unk
 
@@ -179,14 +229,33 @@ func handleMsgMhfInfoGuild(s *Session, p mhfpacket.MHFPacket) {
 			0x00, 0xD6, 0xD8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 		})
 
-		// Unk-ish Indicates an alliance with 0x0a
-		// When using 0x1b there is a lot more data expected after
-		// 0x0 = no alliance
-		bf.WriteUint8(0x0)
+		bf.WriteUint32(0x0) // Alliance ID
 
 		// TODO add alliance parts here
 
-		bf.WriteBytes([]byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
+		applicants, err := GetGuildMembers(s, guild.ID, true)
+
+		if err != nil {
+			resp := byteframe.NewByteFrame()
+			resp.WriteUint32(0) // Count
+			resp.WriteUint8(0)  // Unk, read if count == 0.
+
+			doSizedAckResp(s, pkt.AckHandle, resp.Data())
+		}
+
+		bf.WriteUint16(uint16(len(applicants)))
+
+		for _, applicant := range applicants {
+			bf.WriteUint32(applicant.CharID)
+			bf.WriteUint32(0x05)
+			bf.WriteUint32(0x00320000)
+			bf.WriteUint8(uint8(len(applicant.Name)))
+			bf.WriteBytes([]byte(applicant.Name))
+		}
+
+		// There can be some more bytes here but I cannot make sense of them right now.
+
+		bf.WriteBytes([]byte{0x00, 0x00, 0x00, 0x00})
 
 		doSizedAckResp(s, pkt.AckHandle, bf.Data())
 	} else {
@@ -253,7 +322,45 @@ func handleMsgMhfEnumerateGuild(s *Session, p mhfpacket.MHFPacket) {
 
 func handleMsgMhfUpdateGuild(s *Session, p mhfpacket.MHFPacket) {}
 
-func handleMsgMhfArrangeGuildMember(s *Session, p mhfpacket.MHFPacket) {}
+func handleMsgMhfArrangeGuildMember(s *Session, p mhfpacket.MHFPacket) {
+	pkt := p.(*mhfpacket.MsgMhfArrangeGuildMember)
+
+	guild, err := GetGuildInfoByID(s, pkt.GuildID)
+
+	if err != nil {
+		s.logger.Error(
+			"failed to respond to ArrangeGuildMember message",
+			zap.Uint32("charID", s.charID),
+		)
+		return
+	}
+
+	if guild.Leader.CharID != s.charID {
+		s.logger.Error("non leader attempting to rearrange guild members!",
+			zap.Uint32("charID", s.charID),
+			zap.Uint32("guildID", guild.ID),
+		)
+		return
+	}
+
+	err = guild.ArrangeCharacters(s, pkt.CharIDs)
+
+	if err != nil {
+		s.logger.Error(
+			"failed to respond to ArrangeGuildMember message",
+			zap.Uint32("charID", s.charID),
+			zap.Uint32("guildID", guild.ID),
+		)
+		return
+	}
+
+	ack := &mhfpacket.MsgSysAck{
+		AckHandle: pkt.AckHandle,
+		AckData:   make([]byte, 8),
+	}
+
+	s.QueueSendMHF(ack)
+}
 
 func handleMsgMhfEnumerateGuildMember(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfEnumerateGuildMember)
@@ -276,7 +383,7 @@ func handleMsgMhfEnumerateGuildMember(s *Session, p mhfpacket.MHFPacket) {
 		return
 	}
 
-	guildMembers, err := GetGuildMembers(s, guild.ID, guild.MemberCount)
+	guildMembers, err := GetGuildMembers(s, guild.ID, false)
 
 	if err != nil {
 		s.logger.Error("failed to retrieve guild")
@@ -289,12 +396,15 @@ func handleMsgMhfEnumerateGuildMember(s *Session, p mhfpacket.MHFPacket) {
 
 	for _, member := range guildMembers {
 		bf.WriteUint32(member.CharID)
-		bf.WriteBytes([]byte{0x00, 0x63, 0x00, 0x00, 0x3A, 0xE9, 0x06, 0x00, 0x01}) // Unk
+		bf.WriteBytes([]byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}) // Unk
+		bf.WriteUint16(member.OrderIndex)
 		bf.WriteUint16(uint16(len(member.Name)))
 		bf.WriteBytes([]byte(member.Name))
 	}
 
 	for _, member := range guildMembers {
+		// This is wrong, it should be last login time
+		// TODO add login time
 		bf.WriteUint32(uint32(member.JoinedAt.Unix()))
 	}
 
@@ -342,7 +452,7 @@ func handleMsgMhfGetGuildManageRight(s *Session, p mhfpacket.MHFPacket) {
 	bf.WriteUint16(0x00) // Unk
 	bf.WriteUint16(guild.MemberCount)
 
-	members, err := GetGuildMembers(s, guild.ID, guild.MemberCount)
+	members, err := GetGuildMembers(s, guild.ID, false)
 
 	for _, member := range members {
 		bf.WriteUint32(member.CharID)

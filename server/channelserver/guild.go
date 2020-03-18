@@ -15,18 +15,21 @@ type Guild struct {
 	CreatedAt   time.Time
 	MemberCount uint16
 	Leader      *GuildMember
+	RP          uint32
 }
 
 type GuildMember struct {
-	GuildID     uint32
-	CharID      uint32
-	JoinedAt    time.Time
-	Name        string
-	IsApplicant bool
+	GuildID     uint32    `db:"guild_id"`
+	CharID      uint32    `db:"character_id"`
+	JoinedAt    time.Time `db:"joined_at"`
+	Name        string    `db:"name"`
+	IsApplicant bool      `db:"is_applicant"`
+	IsSubLeader bool      `db:"is_sub_leader"`
+	OrderIndex  uint16    `db:"order_index"`
 }
 
 const guildInfoSelectQuery = `
-		SELECT g.id, g.name, created_at, (
+		SELECT g.id, g.name, g.rp, created_at, (
 			SELECT count(1) FROM guild_characters gc WHERE gc.guild_id = g.id AND gc.is_applicant = false
 		) AS member_count, leader_id, lc.name as leader_name, lgc.joined_at as leader_joined 
 			FROM guilds g
@@ -109,13 +112,13 @@ func GetGuildInfoByCharacterId(s *Session, charID uint32) (*Guild, error) {
 	return buildGuildObjectFromDbResult(rows, err, s)
 }
 
-func GetGuildMembers(s *Session, guildID uint32, memberCount uint16) ([]*GuildMember, error) {
+func GetGuildMembers(s *Session, guildID uint32, applicants bool) ([]*GuildMember, error) {
 	rows, err := s.server.db.Queryx(`
-		SELECT guild_id, joined_at, name, gc.character_id, gc.is_applicant
+		SELECT guild_id, joined_at, name, gc.character_id, gc.is_applicant, gc.is_sub_leader
 			FROM guild_characters gc
 				JOIN characters c on gc.character_id = c.id
-			WHERE guild_id = $1 AND is_applicant = false
-	`, guildID)
+			WHERE guild_id = $1 AND is_applicant = $2
+	`, guildID, applicants)
 
 	if err != nil {
 		s.logger.Error("failed to retrieve membership data for guild", zap.Error(err), zap.Uint32("guildID", guildID))
@@ -124,9 +127,7 @@ func GetGuildMembers(s *Session, guildID uint32, memberCount uint16) ([]*GuildMe
 
 	defer rows.Close()
 
-	members := make([]*GuildMember, memberCount)
-
-	i := 0
+	members := make([]*GuildMember, 0)
 
 	for rows.Next() {
 		member, err := buildGuildMemberObjectFromDBResult(rows, err, s)
@@ -135,8 +136,7 @@ func GetGuildMembers(s *Session, guildID uint32, memberCount uint16) ([]*GuildMe
 			return nil, err
 		}
 
-		members[i] = member
-		i++
+		members = append(members, member)
 	}
 
 	return members, nil
@@ -148,7 +148,7 @@ func buildGuildObjectFromDbResult(result *sql.Rows, err error, s *Session) (*Gui
 	}
 
 	err = result.Scan(
-		&guild.ID, &guild.Name, &guild.CreatedAt, &guild.MemberCount,
+		&guild.ID, &guild.Name, &guild.RP, &guild.CreatedAt, &guild.MemberCount,
 		&guild.Leader.CharID, &guild.Leader.Name, &guild.Leader.JoinedAt,
 	)
 
@@ -165,7 +165,7 @@ func buildGuildObjectFromDbResult(result *sql.Rows, err error, s *Session) (*Gui
 
 func GetCharacterGuildData(s *Session, charID uint32) (*GuildMember, error) {
 	rows, err := s.server.db.Queryx(`
-		SELECT guild_id, joined_at, name, character_id, gc.is_applicant
+		SELECT guild_id, joined_at, name, character_id, gc.is_applicant, gc.is_sub_leader
 			FROM guild_characters gc
 				JOIN characters c on gc.character_id = c.id
 			WHERE character_id=$1
@@ -190,8 +190,8 @@ func GetCharacterGuildData(s *Session, charID uint32) (*GuildMember, error) {
 
 func (guild *Guild) Apply(s *Session, charID uint32) error {
 	_, err := s.server.db.Exec(`
-		INSERT INTO guild_characters (guild_id, character_id, is_applicant)
-		VALUES ($1, $2, true)
+		INSERT INTO guild_characters (guild_id, character_id, is_applicant, order_index)
+		VALUES ($1, $2, true, (SELECT MAX(order_index) + 1 FROM guild_characters WHERE guild_id = $1))
 	`, guild.ID, charID)
 
 	if err != nil {
@@ -260,10 +260,53 @@ func (guild *Guild) RemoveCharacter(s *Session, charID uint32) error {
 	return nil
 }
 
+func (guild *Guild) AcceptCharacter(s *Session, charID uint32) error {
+	_, err := s.server.db.Exec(`UPDATE guild_characters SET is_applicant = false WHERE character_id = $1`, charID)
+
+	if err != nil {
+		s.logger.Error("failed to accept character's guild application", zap.Error(err))
+		return err
+	}
+
+	return nil
+}
+
+func (guild *Guild) ArrangeCharacters(s *Session, charIDs []uint32) error {
+	transaction, err := s.server.db.Begin()
+
+	if err != nil {
+		s.logger.Error("failed to start db transaction", zap.Error(err))
+		return err
+	}
+
+	for i, id := range charIDs {
+		_, err := transaction.Exec("UPDATE guild_characters SET order_index = $1 WHERE character_id = $2", 2+i, id)
+
+		if err != nil {
+			err = transaction.Rollback()
+
+			if err != nil {
+				s.logger.Error("failed to rollback db transaction", zap.Error(err))
+			}
+
+			return err
+		}
+	}
+
+	err = transaction.Commit()
+
+	if err != nil {
+		s.logger.Error("failed to commit db transaction", zap.Error(err))
+		return err
+	}
+
+	return nil
+}
+
 func buildGuildMemberObjectFromDBResult(rows *sqlx.Rows, err error, s *Session) (*GuildMember, error) {
 	memberData := &GuildMember{}
 
-	err = rows.Scan(&memberData.GuildID, &memberData.JoinedAt, &memberData.Name, &memberData.CharID, &memberData.IsApplicant)
+	err = rows.StructScan(&memberData)
 
 	if err != nil {
 		s.logger.Error("failed to retrieve guild data from database", zap.Error(err))
