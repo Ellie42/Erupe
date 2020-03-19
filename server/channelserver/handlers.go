@@ -2049,10 +2049,16 @@ func handleMsgMhfSavePlateBox(s *Session, p mhfpacket.MHFPacket) {
 		}
 
 		// Decompress
-		s.logger.Info("Decompressing...")
-		data, err = nullcomp.Decompress(data)
-		if err != nil {
-			s.logger.Fatal("Failed to decompress savedata from db", zap.Error(err))
+		if len(data) > 0 {
+			// Decompress
+			s.logger.Info("Decompressing...")
+			data, err = nullcomp.Decompress(data)
+			if err != nil {
+				s.logger.Fatal("Failed to decompress savedata from db", zap.Error(err))
+			}
+		} else {
+			// create empty save if absent
+			data = make([]byte, 0x820)
 		}
 
 		// Perform diff and compress it to write back to db
