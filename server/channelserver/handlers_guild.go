@@ -7,6 +7,7 @@ import (
 	"github.com/Andoryuuta/Erupe/network/mhfpacket"
 	"github.com/Andoryuuta/byteframe"
 	"go.uber.org/zap"
+	"sort"
 )
 
 func handleMsgMhfCreateGuild(s *Session, p mhfpacket.MHFPacket) {
@@ -311,11 +312,11 @@ func handleMsgMhfEnumerateGuild(s *Session, p mhfpacket.MHFPacket) {
 		bf.WriteBytes([]byte(guildName))
 		bf.WriteUint8(uint8(len(leaderName)))
 		bf.WriteBytes([]byte(leaderName))
-		bf.WriteUint8(0x01)
+		bf.WriteUint8(0x01) // Unk
 	}
 
-	bf.WriteUint8(0x01)
-	bf.WriteUint8(0x00)
+	bf.WriteUint8(0x01) // Unk
+	bf.WriteUint8(0x00) // Unk
 
 	doSizedAckResp(s, pkt.AckHandle, bf.Data())
 }
@@ -394,6 +395,10 @@ func handleMsgMhfEnumerateGuildMember(s *Session, p mhfpacket.MHFPacket) {
 
 	bf.WriteUint16(guild.MemberCount)
 
+	sort.Slice(guildMembers[:], func(i, j int) bool {
+		return guildMembers[i].OrderIndex < guildMembers[j].OrderIndex
+	})
+
 	for _, member := range guildMembers {
 		bf.WriteUint32(member.CharID)
 		bf.WriteBytes([]byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}) // Unk
@@ -403,9 +408,7 @@ func handleMsgMhfEnumerateGuildMember(s *Session, p mhfpacket.MHFPacket) {
 	}
 
 	for _, member := range guildMembers {
-		// This is wrong, it should be last login time
-		// TODO add login time
-		bf.WriteUint32(uint32(member.JoinedAt.Unix()))
+		bf.WriteUint32(member.LastLogin)
 	}
 
 	bf.WriteBytes([]byte{0x00, 0x00}) // Unk, might be to do with alliance, 0x00 == no alliance

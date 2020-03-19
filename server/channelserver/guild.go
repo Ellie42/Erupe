@@ -26,6 +26,7 @@ type GuildMember struct {
 	IsApplicant bool      `db:"is_applicant"`
 	IsSubLeader bool      `db:"is_sub_leader"`
 	OrderIndex  uint16    `db:"order_index"`
+	LastLogin   uint32    `db:"last_login"`
 }
 
 const guildInfoSelectQuery = `
@@ -114,7 +115,7 @@ func GetGuildInfoByCharacterId(s *Session, charID uint32) (*Guild, error) {
 
 func GetGuildMembers(s *Session, guildID uint32, applicants bool) ([]*GuildMember, error) {
 	rows, err := s.server.db.Queryx(`
-		SELECT guild_id, joined_at, name, gc.character_id, gc.is_applicant, gc.is_sub_leader
+		SELECT guild_id, joined_at, name, gc.character_id, gc.is_applicant, gc.is_sub_leader, gc.order_index, c.last_login
 			FROM guild_characters gc
 				JOIN characters c on gc.character_id = c.id
 			WHERE guild_id = $1 AND is_applicant = $2
@@ -165,7 +166,7 @@ func buildGuildObjectFromDbResult(result *sql.Rows, err error, s *Session) (*Gui
 
 func GetCharacterGuildData(s *Session, charID uint32) (*GuildMember, error) {
 	rows, err := s.server.db.Queryx(`
-		SELECT guild_id, joined_at, name, character_id, gc.is_applicant, gc.is_sub_leader
+		SELECT guild_id, joined_at, name, character_id, gc.is_applicant, gc.is_sub_leader, gc.order_index, c.last_login
 			FROM guild_characters gc
 				JOIN characters c on gc.character_id = c.id
 			WHERE character_id=$1
