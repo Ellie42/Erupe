@@ -3405,7 +3405,11 @@ func handleMsgMhfGetRengokuRankingRank(s *Session, p mhfpacket.MHFPacket) {
 	doSizedAckResp(s, pkt.AckHandle, resp.Data())
 }
 
-func handleMsgMhfAcquireExchangeShop(s *Session, p mhfpacket.MHFPacket) {}
+func handleMsgMhfAcquireExchangeShop(s *Session, p mhfpacket.MHFPacket) {
+	// writing out to an editable shop enumeration
+	pkt := p.(*mhfpacket.MsgMhfAcquireExchangeShop)
+	s.QueueAck(pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
+}
 
 func handleMsgSysReserve19B(s *Session, p mhfpacket.MHFPacket) {}
 
