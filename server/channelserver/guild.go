@@ -304,6 +304,22 @@ func (guild *Guild) ArrangeCharacters(s *Session, charIDs []uint32) error {
 	return nil
 }
 
+func (guild *Guild) DonateRP(s *Session, rp uint16) error {
+	_, err := s.server.db.Exec("UPDATE guilds SET rp = rp + $1 WHERE id = $2", rp, guild.ID)
+
+	if err != nil {
+		s.logger.Error(
+			"failed to donate RP to guild",
+			zap.Error(err),
+			zap.Uint32("guildID", guild.ID),
+		)
+
+		return err
+	}
+
+	return nil
+}
+
 func buildGuildMemberObjectFromDBResult(rows *sqlx.Rows, err error, s *Session) (*GuildMember, error) {
 	memberData := &GuildMember{}
 

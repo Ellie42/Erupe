@@ -83,6 +83,17 @@ func handleMsgMhfOperateGuild(s *Session, p mhfpacket.MHFPacket) {
 		}
 
 		bf.WriteBytes([]byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, byte(response)})
+	case mhfpacket.OPERATE_GUILD_ACTION_DONATE:
+		rp := binary.BigEndian.Uint16(pkt.UnkData[3:5])
+		err := guild.DonateRP(s, rp)
+
+		if err != nil {
+			return
+		}
+
+		bf.WriteUint32(0x00)
+		bf.WriteUint32(0x65B6) // Points remaining
+
 	default:
 		panic(fmt.Sprintf("unhandled operate guild action '%d'", pkt.Action))
 	}
@@ -207,11 +218,11 @@ func handleMsgMhfInfoGuild(s *Session, p mhfpacket.MHFPacket) {
 		bf.WriteBytes([]byte(guild.Name))
 		bf.WriteBytes([]byte(guildMainMotto))
 
-		if characterGuildData != nil && !characterGuildData.IsApplicant {
-			bf.WriteUint8(0x01)
-		} else {
-			bf.WriteUint8(0xFF)
-		}
+		//if characterGuildData != nil && !characterGuildData.IsApplicant {
+		//	bf.WriteUint8(0x01)
+		//} else {
+		bf.WriteUint8(0xFF) // Unk
+		//}
 
 		bf.WriteUint32(guild.RP)
 		bf.WriteBytes([]byte(guild.Leader.Name))
@@ -226,7 +237,7 @@ func handleMsgMhfInfoGuild(s *Session, p mhfpacket.MHFPacket) {
 
 		// Unk
 		bf.WriteBytes([]byte{
-			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1E, 0x00,
+			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x3C, 0x00,
 			0x00, 0xD6, 0xD8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 		})
 
@@ -256,7 +267,7 @@ func handleMsgMhfInfoGuild(s *Session, p mhfpacket.MHFPacket) {
 
 		// There can be some more bytes here but I cannot make sense of them right now.
 
-		bf.WriteBytes([]byte{0x00, 0x00, 0x00, 0x00})
+		bf.WriteBytes([]byte{0x01, 0x01, 0x00, 0x00})
 
 		doSizedAckResp(s, pkt.AckHandle, bf.Data())
 	} else {
