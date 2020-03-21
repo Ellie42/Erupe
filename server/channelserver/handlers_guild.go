@@ -84,16 +84,11 @@ func handleMsgMhfOperateGuild(s *Session, p mhfpacket.MHFPacket) {
 
 		bf.WriteBytes([]byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, byte(response)})
 	case mhfpacket.OPERATE_GUILD_ACTION_DONATE:
-		rp := binary.BigEndian.Uint16(pkt.UnkData[3:5])
-		err := guild.DonateRP(s, rp)
+		err := handleOperateGuildActionDonate(s, guild, pkt, bf)
 
 		if err != nil {
 			return
 		}
-
-		bf.WriteUint32(0x00)
-		bf.WriteUint32(0x65B6) // Points remaining
-
 	default:
 		panic(fmt.Sprintf("unhandled operate guild action '%d'", pkt.Action))
 	}
@@ -104,6 +99,70 @@ func handleMsgMhfOperateGuild(s *Session, p mhfpacket.MHFPacket) {
 	}
 
 	s.QueueSendMHF(ackMessage)
+}
+
+func handleOperateGuildActionDonate(s *Session, guild *Guild, pkt *mhfpacket.MsgMhfOperateGuild, bf *byteframe.ByteFrame) error {
+	rp := binary.BigEndian.Uint16(pkt.UnkData[3:5])
+
+	saveData, err := GetCharacterSaveData(s, s.charID)
+
+	if err != nil {
+		return err
+	}
+
+	if saveData.RP < rp {
+		s.logger.Warn(
+			"character attempting to donate more RP than they own",
+			zap.Uint32("charID", s.charID),
+			zap.Uint16("rp", rp),
+		)
+		return err
+	}
+
+	saveData.RP -= rp
+
+	transaction, err := s.server.db.Begin()
+
+	if err != nil {
+		s.logger.Error("failed to start db transaction", zap.Error(err))
+		return err
+	}
+
+	err = saveData.Save(s, transaction)
+
+	if err != nil {
+		err = transaction.Rollback()
+
+		if err != nil {
+			s.logger.Error("failed to rollback transaction", zap.Error(err))
+		}
+
+		return err
+	}
+
+	err = guild.DonateRP(s, rp, transaction)
+
+	if err != nil {
+		err = transaction.Rollback()
+
+		if err != nil {
+			s.logger.Error("failed to rollback transaction", zap.Error(err))
+		}
+
+		return err
+	}
+
+	err = transaction.Commit()
+
+	if err != nil {
+		s.logger.Error("failed to commit transaction", zap.Error(err))
+		return err
+	}
+
+	bf.WriteUint32(0x00)
+	bf.WriteUint32(uint32(saveData.RP)) // Points remaining
+
+	return nil
 }
 
 func handleMsgMhfOperateGuildMember(s *Session, p mhfpacket.MHFPacket) {

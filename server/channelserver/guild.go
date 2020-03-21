@@ -304,8 +304,14 @@ func (guild *Guild) ArrangeCharacters(s *Session, charIDs []uint32) error {
 	return nil
 }
 
-func (guild *Guild) DonateRP(s *Session, rp uint16) error {
-	_, err := s.server.db.Exec("UPDATE guilds SET rp = rp + $1 WHERE id = $2", rp, guild.ID)
+func (guild *Guild) DonateRP(s *Session, rp uint16, transaction *sql.Tx) (err error) {
+	updateSQL := "UPDATE guilds SET rp = rp + $1 WHERE id = $2"
+
+	if transaction != nil {
+		_, err = transaction.Exec(updateSQL, rp, guild.ID)
+	} else {
+		_, err = s.server.db.Exec(updateSQL, rp, guild.ID)
+	}
 
 	if err != nil {
 		s.logger.Error(
