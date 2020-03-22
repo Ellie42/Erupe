@@ -24,7 +24,7 @@ func handleMsgMhfCreateMercenary(s *Session, p mhfpacket.MHFPacket) {
 
 func handleMsgMhfSaveMercenary(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfSaveMercenary)
-	s.QueueAck(pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
+	doAckSimpleSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
 }
 
 func handleMsgMhfReadMercenaryW(s *Session, p mhfpacket.MHFPacket) {
@@ -34,7 +34,7 @@ func handleMsgMhfReadMercenaryW(s *Session, p mhfpacket.MHFPacket) {
 	if err != nil {
 		s.logger.Fatal("Failed to get savemercenary data from db", zap.Error(err))
 	}
-	doSizedAckResp(s, pkt.AckHandle, data)
+	doAckBufSucceed(s, pkt.AckHandle, data)
 }
 
 func handleMsgMhfReadMercenaryM(s *Session, p mhfpacket.MHFPacket) {
