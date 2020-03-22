@@ -794,12 +794,12 @@ func handleMsgSysCloseMutex(s *Session, p mhfpacket.MHFPacket) {}
 func handleMsgSysCreateSemaphore(s *Session, p mhfpacket.MHFPacket) {
 	// All of the semaphore stuff very likely needs something like stage handling implemented
 	pkt := p.(*mhfpacket.MsgSysCreateSemaphore)
-	doAckBufSucceed(s, pkt.AckHandle, []byte{0x00, 0x03, 0x00, 0x0d})
+	doAckSimpleSucceed(s, pkt.AckHandle, []byte{0x00, 0x03, 0x00, 0x0d})
 }
 
 func handleMsgSysCreateAcquireSemaphore(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgSysCreateAcquireSemaphore)
-	doAckBufSucceed(s, pkt.AckHandle, []byte{0x00, 0x0F, 0x00, 0x1D})
+	doAckSimpleSucceed(s, pkt.AckHandle, []byte{0x00, 0x0F, 0x00, 0x1D})
 }
 
 func handleMsgSysDeleteSemaphore(s *Session, p mhfpacket.MHFPacket) {}
@@ -1482,7 +1482,7 @@ func handleMsgMhfAcquireCafeItem(s *Session, p mhfpacket.MHFPacket) {}
 func handleMsgMhfUpdateCafepoint(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfUpdateCafepoint)
 	// not sized
-	doAckBufSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x04, 0x8b})
+	doAckSimpleSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x04, 0x8b})
 }
 
 func handleMsgMhfCheckDailyCafepoint(s *Session, p mhfpacket.MHFPacket) {}
