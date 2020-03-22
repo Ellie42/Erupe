@@ -9,6 +9,12 @@
         "fixedstageid": true
     },
 
+    "discord": {
+        "enabled": false,
+        "bottoken": "<BOT TOKEN>",
+        "channelid": "<CHANNEL ID>"
+    },
+
     "database": {
         "host": "localhost",
         "port": 5432,

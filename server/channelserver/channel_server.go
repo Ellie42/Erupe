@@ -6,9 +6,11 @@ import (
 	"sync"
 
 	"github.com/Andoryuuta/Erupe/config"
+	"github.com/Andoryuuta/Erupe/network/binpacket"
 	"github.com/Andoryuuta/Erupe/network/mhfpacket"
 	"github.com/Andoryuuta/byteframe"
 	"github.com/jmoiron/sqlx"
+	"github.com/matterbridge/discordgo"
 	"go.uber.org/zap"
 )
 
@@ -43,6 +45,9 @@ type Server struct {
 
 	userBinaryPartsLock sync.RWMutex
 	userBinaryParts     map[userBinaryPartID][]byte
+
+	// Discord chat integration
+	discordSession *discordgo.Session
 }
 
 // NewServer creates a new Server type.
@@ -56,6 +61,7 @@ func NewServer(config *Config) *Server {
 		sessions:        make(map[net.Conn]*Session),
 		stages:          make(map[string]*Stage),
 		userBinaryParts: make(map[userBinaryPartID][]byte),
+		discordSession:  nil,
 	}
 
 	// Default town stage that clients try to enter without creating.
@@ -72,6 +78,16 @@ func NewServer(config *Config) *Server {
 
 	// sl1Ns257p0a0uE31111 -- house for charID E31111.
 
+	// Create the discord session, (not actually connecting to discord servers yet).
+	if s.erupeConfig.Discord.Enabled {
+		ds, err := discordgo.New("Bot " + s.erupeConfig.Discord.BotToken)
+		if err != nil {
+			s.logger.Fatal("Error creating Discord session.", zap.Error(err))
+		}
+		ds.AddHandler(s.onDiscordMessage)
+		s.discordSession = ds
+	}
+
 	return s
 }
 
@@ -86,6 +102,15 @@ func (s *Server) Start() error {
 	go s.acceptClients()
 	go s.manageSessions()
 
+	// Start the discord bot for chat integration.
+	if s.erupeConfig.Discord.Enabled {
+		err = s.discordSession.Open()
+		if err != nil {
+			s.logger.Warn("Error opening Discord session.", zap.Error(err))
+			return err
+		}
+	}
+
 	return nil
 }
 
@@ -97,6 +122,8 @@ func (s *Server) Shutdown() {
 
 	s.listener.Close()
 	close(s.acceptConns)
+
+	s.discordSession.Close()
 }
 
 func (s *Server) acceptClients() {
@@ -166,6 +193,38 @@ func (s *Server) BroadcastMHF(pkt mhfpacket.MHFPacket, ignoredSession *Session) 
 		// Enqueue in a non-blocking way that drops the packet if the connections send buffer channel is full.
 		session.QueueSendNonBlocking(bf.Data())
 	}
+}
+
+// BroadcastChatMessage broadcasts a simple chat message to all the sessions.
+func (s *Server) BroadcastChatMessage(message string) {
+	bf := byteframe.NewByteFrame()
+	bf.SetLE()
+	msgBinChat := &binpacket.MsgBinChat{
+		Unk0:       0,
+		Type:       5,
+		Flags:      0x80,
+		Message:    message,
+		SenderName: "Erupe",
+	}
+	msgBinChat.Build(bf)
+
+	s.BroadcastMHF(&mhfpacket.MsgSysCastedBinary{
+		CharID:         0xFFFFFFFF,
+		Type1:          BinaryMessageTypeChat,
+		RawDataPayload: bf.Data(),
+	}, nil)
+}
+
+// onDiscordMessage handles receiving messages from discord and forwarding them ingame.
+func (s *Server) onDiscordMessage(ds *discordgo.Session, m *discordgo.MessageCreate) {
+	// Ignore messages from our bot, or ones that are not in the correct channel.
+	if m.Author.ID == ds.State.User.ID || m.ChannelID != s.erupeConfig.Discord.ChannelID {
+		return
+	}
+
+	// Broadcast to the game clients.
+	message := fmt.Sprintf("[DISCORD] %s: %s", m.Author.Username, m.Content)
+	s.BroadcastChatMessage(message)
 }
 
 func (s *Server) FindSessionByCharID(charID uint32) *Session {
