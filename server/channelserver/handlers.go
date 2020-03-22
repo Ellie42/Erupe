@@ -6,13 +6,14 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
-	"github.com/Andoryuuta/Erupe/network/binpacket"
 	"io"
 	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/Andoryuuta/Erupe/network/binpacket"
 
 	"github.com/Andoryuuta/Erupe/network/mhfpacket"
 	"github.com/Andoryuuta/Erupe/server/channelserver/compression/deltacomp"
@@ -28,7 +29,7 @@ func stubEnumerateNoResults(s *Session, ackHandle uint32) {
 	enumBf := byteframe.NewByteFrame()
 	enumBf.WriteUint32(0) // Entry count (count for quests, rankings, events, etc.)
 
-	doSizedAckResp(s, ackHandle, enumBf.Data())
+	doAckBufSucceed(s, ackHandle, enumBf.Data())
 }
 
 // Temporary function to just return no results for many MSG_MHF_GET* packets.
@@ -39,21 +40,43 @@ func stubGetNoResults(s *Session, ackHandle uint32) {
 	resp.WriteUint32(0)          // Unk
 	resp.WriteUint32(0)          // Entry count
 
-	doSizedAckResp(s, ackHandle, resp.Data())
+	doAckBufSucceed(s, ackHandle, resp.Data())
 }
 
-// Some common ACK response header that a lot (but not all) of the packet responses use.
-func doSizedAckResp(s *Session, ackHandle uint32, data []byte) {
-	// Wrap the data into another container with the data size.
-	bfw := byteframe.NewByteFrame()
-	bfw.WriteUint8(1)                  // Unk
-	bfw.WriteUint8(0)                  // Unk
-	bfw.WriteUint16(uint16(len(data))) // Data size
-	if len(data) > 0 {
-		bfw.WriteBytes(data)
-	}
+func doAckBufSucceed(s *Session, ackHandle uint32, data []byte) {
+	s.QueueSendMHF(&mhfpacket.MsgSysAck{
+		AckHandle:        ackHandle,
+		IsBufferResponse: true,
+		ErrorCode:        0,
+		AckData:          data,
+	})
+}
 
-	s.QueueAck(ackHandle, bfw.Data())
+func doAckBufFail(s *Session, ackHandle uint32, data []byte) {
+	s.QueueSendMHF(&mhfpacket.MsgSysAck{
+		AckHandle:        ackHandle,
+		IsBufferResponse: true,
+		ErrorCode:        1,
+		AckData:          data,
+	})
+}
+
+func doAckSimpleSucceed(s *Session, ackHandle uint32, data []byte) {
+	s.QueueSendMHF(&mhfpacket.MsgSysAck{
+		AckHandle:        ackHandle,
+		IsBufferResponse: false,
+		ErrorCode:        0,
+		AckData:          data,
+	})
+}
+
+func doAckSimpleFail(s *Session, ackHandle uint32, data []byte) {
+	s.QueueSendMHF(&mhfpacket.MsgSysAck{
+		AckHandle:        ackHandle,
+		IsBufferResponse: false,
+		ErrorCode:        1,
+		AckData:          data,
+	})
 }
 
 func updateRights(s *Session) {
@@ -155,15 +178,16 @@ func handleMsgSysAck(s *Session, p mhfpacket.MHFPacket) {}
 func handleMsgSysTerminalLog(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgSysTerminalLog)
 
-	resp := byteframe.NewByteFrame()
 	/*
 		if pkt.LogID == 0{
 			fmt.Println("New log session")
 		}
 	*/
-	resp.WriteUint32(0)          // UNK
+
+	resp := byteframe.NewByteFrame()
 	resp.WriteUint32(0x98bd51a9) // LogID to use for requests after this.
-	s.QueueAck(pkt.AckHandle, resp.Data())
+
+	doAckSimpleSucceed(s, pkt.AckHandle, resp.Data())
 }
 
 func handleMsgSysLogin(s *Session, p mhfpacket.MHFPacket) {
@@ -174,9 +198,9 @@ func handleMsgSysLogin(s *Session, p mhfpacket.MHFPacket) {
 	s.Unlock()
 
 	bf := byteframe.NewByteFrame()
-	bf.WriteUint32(0)                         // Unk
 	bf.WriteUint32(uint32(time.Now().Unix())) // Unix timestamp
-	s.QueueAck(pkt.AckHandle, bf.Data())
+
+	doAckSimpleSucceed(s, pkt.AckHandle, bf.Data())
 }
 
 func handleMsgSysLogout(s *Session, p mhfpacket.MHFPacket) {
@@ -188,10 +212,7 @@ func handleMsgSysSetStatus(s *Session, p mhfpacket.MHFPacket) {}
 func handleMsgSysPing(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgSysPing)
 
-	bf := byteframe.NewByteFrame()
-	bf.WriteUint32(0) // Unk
-	bf.WriteUint32(0) // Unk
-	s.QueueAck(pkt.AckHandle, bf.Data())
+	doAckSimpleSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
 }
 
 const (
@@ -330,14 +351,14 @@ func handleMsgSysGetFile(s *Session, p mhfpacket.MHFPacket) {
 			if err != nil {
 				panic(err)
 			}
-			doSizedAckResp(s, pkt.AckHandle, data)
+			doAckBufSucceed(s, pkt.AckHandle, data)
 		} else {
 			// Get quest file.
 			data, err := ioutil.ReadFile(filepath.Join(s.server.erupeConfig.BinPath, fmt.Sprintf("quests/%s.bin", stripNullTerminator(pkt.Filename))))
 			if err != nil {
 				panic(err)
 			}
-			doSizedAckResp(s, pkt.AckHandle, data)
+			doAckBufSucceed(s, pkt.AckHandle, data)
 		}
 	} else {
 
@@ -367,7 +388,7 @@ func handleMsgSysGetFile(s *Session, p mhfpacket.MHFPacket) {
 			panic(err)
 		}
 
-		doSizedAckResp(s, pkt.AckHandle, data)
+		doAckBufSucceed(s, pkt.AckHandle, data)
 	}
 
 }
@@ -391,13 +412,12 @@ func handleMsgSysIssueLogkey(s *Session, p mhfpacket.MHFPacket) {
 	// Issue it.
 	resp := byteframe.NewByteFrame()
 	resp.WriteBytes(logKey)
-	doSizedAckResp(s, pkt.AckHandle, resp.Data())
+	doAckBufSucceed(s, pkt.AckHandle, resp.Data())
 }
 
 func handleMsgSysRecordLog(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgSysRecordLog)
-	resp := make([]byte, 8) // Unk resp.
-	s.QueueAck(pkt.AckHandle, resp)
+	doAckSimpleSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
 }
 
 func handleMsgSysEcho(s *Session, p mhfpacket.MHFPacket) {}
@@ -411,8 +431,7 @@ func handleMsgSysCreateStage(s *Session, p mhfpacket.MHFPacket) {
 	s.server.stages[stage.id] = stage
 	s.server.stagesLock.Unlock()
 
-	resp := make([]byte, 8) // Unk resp.
-	s.QueueAck(pkt.AckHandle, resp)
+	doAckSimpleSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
 }
 
 func handleMsgSysStageDestruct(s *Session, p mhfpacket.MHFPacket) {}
@@ -444,7 +463,7 @@ func doStageTransfer(s *Session, ackHandle uint32, stageID string) {
 	s.QueueSendMHF(&mhfpacket.MsgSysCleanupObject{})
 
 	// Confirm the stage entry.
-	s.QueueAck(ackHandle, []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
+	doAckSimpleSucceed(s, ackHandle, []byte{0x00, 0x00, 0x00, 0x00})
 
 	// Notify existing stage clients that this new client has entered.
 	s.logger.Info("Sending MsgSysInsertUser")
@@ -609,7 +628,7 @@ func handleMsgSysLeaveStage(s *Session, p mhfpacket.MHFPacket) {}
 func handleMsgSysLockStage(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgSysLockStage)
 	// TODO(Andoryuuta): What does this packet _actually_ do?
-	s.QueueAck(pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
+	doAckSimpleSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
 }
 
 func handleMsgSysUnlockStage(s *Session, p mhfpacket.MHFPacket) {}
@@ -637,7 +656,7 @@ func handleMsgSysReserveStage(s *Session, p mhfpacket.MHFPacket) {
 	// Reserve stage is also sent when a player is ready, probably need to parse the
 	// request a little more thoroughly.
 	if _, exists := stage.reservedClientSlots[s.charID]; exists {
-		s.QueueAck(pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
+		doAckSimpleSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
 	} else if uint16(len(stage.reservedClientSlots)) < stage.maxPlayers {
 		// Add the charID to the stage's reservation map
 		stage.reservedClientSlots[s.charID] = nil
@@ -647,9 +666,9 @@ func handleMsgSysReserveStage(s *Session, p mhfpacket.MHFPacket) {
 		s.reservationStage = stage
 		s.Unlock()
 
-		s.QueueAck(pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
+		doAckSimpleSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
 	} else {
-		s.QueueAck(pkt.AckHandle, []byte{0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
+		doAckSimpleFail(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
 	}
 
 }
@@ -692,7 +711,7 @@ func handleMsgSysWaitStageBinary(s *Session, p mhfpacket.MHFPacket) {
 	// In the packet captures, it seemingly comes out of nowhere, so presumably the server makes it.
 	if pkt.BinaryType0 == 1 && pkt.BinaryType1 == 12 {
 		// This might contain the hunter count, or max player count?
-		doSizedAckResp(s, pkt.AckHandle, []byte{0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
+		doAckBufSucceed(s, pkt.AckHandle, []byte{0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
 		return
 	}
 
@@ -708,7 +727,7 @@ func handleMsgSysWaitStageBinary(s *Session, p mhfpacket.MHFPacket) {
 			s.logger.Debug("MsgSysWaitStageBinary after lock and get stage")
 
 			if gotBinary {
-				doSizedAckResp(s, pkt.AckHandle, stageBinary)
+				doAckBufSucceed(s, pkt.AckHandle, stageBinary)
 				break
 			} else {
 				s.logger.Debug("Waiting stage binary", zap.Uint8("BinaryType0", pkt.BinaryType0), zap.Uint8("pkt.BinaryType1", pkt.BinaryType1))
@@ -723,7 +742,7 @@ func handleMsgSysWaitStageBinary(s *Session, p mhfpacket.MHFPacket) {
 				if timeout {
 					s.logger.Warn("Failed to get stage binary", zap.Uint8("BinaryType0", pkt.BinaryType0), zap.Uint8("pkt.BinaryType1", pkt.BinaryType1))
 					s.logger.Warn("Sending blank stage binary")
-					doSizedAckResp(s, pkt.AckHandle, []byte{})
+					doAckBufSucceed(s, pkt.AckHandle, []byte{})
 					return
 				}
 			*/
@@ -774,16 +793,22 @@ func handleMsgSysGetStageBinary(s *Session, p mhfpacket.MHFPacket) {
 	}
 
 	if gotBinary {
-		doSizedAckResp(s, pkt.AckHandle, stageBinary)
+		doAckBufSucceed(s, pkt.AckHandle, stageBinary)
 
 	} else if pkt.BinaryType1 == 4 {
 		// This particular type seems to be expecting data that isn't set
 		// is it required before the party joining can be completed
-		s.QueueAck(pkt.AckHandle, []byte{0x01, 0x00, 0x00, 0x00, 0x10})
+		//s.QueueAck(pkt.AckHandle, []byte{0x01, 0x00, 0x00, 0x00, 0x10})
+
+		// TODO(Andoryuuta): This doesn't fit a normal ack packet? where is this from?
+		// This would be a buffered(0x01), non-error(0x00), with no data payload (size 0x00, 0x00) packet.
+		// but for some reason has a 0x10 on the end that the client shouldn't parse?
+
+		doAckBufSucceed(s, pkt.AckHandle, []byte{}) // Without the previous 0x10 suffix
 	} else {
 		s.logger.Warn("Failed to get stage binary", zap.Uint8("BinaryType0", pkt.BinaryType0), zap.Uint8("pkt.BinaryType1", pkt.BinaryType1))
 		s.logger.Warn("Sending blank stage binary")
-		doSizedAckResp(s, pkt.AckHandle, []byte{})
+		doAckBufSucceed(s, pkt.AckHandle, []byte{})
 	}
 
 	s.logger.Debug("MsgSysGetStageBinary Done!")
@@ -829,7 +854,7 @@ func handleMsgSysEnumerateClient(s *Session, p mhfpacket.MHFPacket) {
 
 	stage.RUnlock()
 
-	doSizedAckResp(s, pkt.AckHandle, resp.Data())
+	doAckBufSucceed(s, pkt.AckHandle, resp.Data())
 	s.logger.Debug("MsgSysEnumerateClient Done!")
 }
 
@@ -862,7 +887,7 @@ func handleMsgSysEnumerateStage(s *Session, p mhfpacket.MHFPacket) {
 		resp.WriteBytes([]byte(sid))
 	}
 
-	doSizedAckResp(s, pkt.AckHandle, resp.Data())
+	doAckBufSucceed(s, pkt.AckHandle, resp.Data())
 	s.logger.Debug("handleMsgSysEnumerateStage Done!")
 }
 
@@ -879,12 +904,12 @@ func handleMsgSysCloseMutex(s *Session, p mhfpacket.MHFPacket) {}
 func handleMsgSysCreateSemaphore(s *Session, p mhfpacket.MHFPacket) {
 	// All of the semaphore stuff very likely needs something like stage handling implemented
 	pkt := p.(*mhfpacket.MsgSysCreateSemaphore)
-	s.QueueAck(pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x00, 0x0d})
+	doAckBufSucceed(s, pkt.AckHandle, []byte{0x00, 0x03, 0x00, 0x0d})
 }
 
 func handleMsgSysCreateAcquireSemaphore(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgSysCreateAcquireSemaphore)
-	s.QueueAck(pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x0F, 0x00, 0x1D})
+	doAckBufSucceed(s, pkt.AckHandle, []byte{0x00, 0x0F, 0x00, 0x1D})
 }
 
 func handleMsgSysDeleteSemaphore(s *Session, p mhfpacket.MHFPacket) {}
@@ -906,7 +931,7 @@ func handleMsgSysLoadRegister(s *Session, p mhfpacket.MHFPacket) {
 	// ravi response
 	//data, _ := hex.DecodeString("000C000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")
 	data, _ := hex.DecodeString("01000076001d0001b2c4000227d1000221040000a959000000000000000000000000000000000000000000532d1c0010ee8e001fe0010007f463000000000017e53e00072e250053937a0000194a00002d5a000000000000000000004eb300004cd700000000000008a90000be400001bb16000005dd00000014")
-	doSizedAckResp(s, pkt.AckHandle, data)
+	doAckBufSucceed(s, pkt.AckHandle, data)
 }
 
 func handleMsgSysNotifyRegister(s *Session, p mhfpacket.MHFPacket) {}
@@ -941,9 +966,8 @@ func handleMsgSysCreateObject(s *Session, p mhfpacket.MHFPacket) {
 
 	// Response to our requesting client.
 	resp := byteframe.NewByteFrame()
-	resp.WriteUint32(0)     // Unk, is this echoed back from pkt.TargetCount?
 	resp.WriteUint32(objID) // New local obj handle.
-	s.QueueAck(pkt.AckHandle, resp.Data())
+	doAckSimpleSucceed(s, pkt.AckHandle, resp.Data())
 
 	// Duplicate the object creation to all sessions in the same stage.
 	dupObjUpdate := &mhfpacket.MsgSysDuplicateObject{
@@ -1055,7 +1079,7 @@ func handleMsgSysGetUserBinary(s *Session, p mhfpacket.MHFPacket) {
 		resp.WriteBytes(data)
 	}
 
-	doSizedAckResp(s, pkt.AckHandle, resp.Data())
+	doAckBufSucceed(s, pkt.AckHandle, resp.Data())
 }
 
 func handleMsgSysNotifyUserBinary(s *Session, p mhfpacket.MHFPacket) {}
@@ -1176,7 +1200,7 @@ func handleMsgMhfSavedata(s *Session, p mhfpacket.MHFPacket) {
 		s.logger.Fatal("Failed to update character name in db", zap.Error(err))
 	}
 
-	s.QueueAck(pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
+	doAckSimpleSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
 }
 
 func handleMsgMhfLoaddata(s *Session, p mhfpacket.MHFPacket) {
@@ -1186,7 +1210,7 @@ func handleMsgMhfLoaddata(s *Session, p mhfpacket.MHFPacket) {
 	if err != nil {
 		s.logger.Fatal("Failed to get savedata from db", zap.Error(err))
 	}
-	doSizedAckResp(s, pkt.AckHandle, data)
+	doAckBufSucceed(s, pkt.AckHandle, data)
 }
 
 func handleMsgMhfListMember(s *Session, p mhfpacket.MHFPacket) {
@@ -1195,7 +1219,7 @@ func handleMsgMhfListMember(s *Session, p mhfpacket.MHFPacket) {
 	resp := byteframe.NewByteFrame()
 	resp.WriteUint32(0) // Members count. (Unsure of what kind of members these actually are, guild, party, COG subscribers, etc.)
 
-	doSizedAckResp(s, pkt.AckHandle, resp.Data())
+	doAckBufSucceed(s, pkt.AckHandle, resp.Data())
 }
 
 func handleMsgMhfOprMember(s *Session, p mhfpacket.MHFPacket) {}
@@ -1211,7 +1235,7 @@ func handleMsgMhfEnumerateDistItem(s *Session, p mhfpacket.MHFPacket) {
 	// uint8 stringLength
 	// string nullTermString
 	data, _ := hex.DecodeString("0001000000FF0000000000000000002000000000FFFFFFFFFFFFFFFFFFFFFFFF0000000000000000002F323020426F7820457870616E73696F6E73000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")
-	doSizedAckResp(s, pkt.AckHandle, data)
+	doAckBufSucceed(s, pkt.AckHandle, data)
 
 }
 
@@ -1236,19 +1260,19 @@ func handleMsgMhfApplyDistItem(s *Session, p mhfpacket.MHFPacket) {
 	// int32: Unique item hash for tracking server side purchases? Swapping across items didn't change image/cost/function etc.
 	pkt := p.(*mhfpacket.MsgMhfApplyDistItem)
 	if pkt.RequestType == 0 {
-		doSizedAckResp(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
+		doAckBufSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
 	} else if pkt.RequestType == 0x000000FF {
 		// box expansions
 		data, _ := hex.DecodeString("0052a49100021f00000000000000140274db991e00000000000000140274db99")
-		doSizedAckResp(s, pkt.AckHandle, data)
+		doAckBufSucceed(s, pkt.AckHandle, data)
 	} else {
-		doSizedAckResp(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
+		doAckBufSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
 	}
 }
 
 func handleMsgMhfAcquireDistItem(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfAcquireDistItem)
-	s.QueueAck(pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
+	doAckSimpleSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
 }
 
 func handleMsgMhfGetDistDescription(s *Session, p mhfpacket.MHFPacket) {
@@ -1256,7 +1280,7 @@ func handleMsgMhfGetDistDescription(s *Session, p mhfpacket.MHFPacket) {
 	// string for the associated message
 	data, _ := hex.DecodeString("007E43303547656E65726963204974656D20436C61696D204D6573736167657E4330300D0A596F752067657420736F6D65206B696E64206F66206974656D732070726F6261626C792E00000100")
 	//data, _ := hex.DecodeString("0075b750c1c2b17ac1cab652a1757e433035b8cbb3c6bd63c258b169aa41b0c87e433030a1760a0aa175b8cbb3c6bd63c258b169aa41b0c8a176a843c1caa44a31a6b8a141a569c258b169a2b0add30aa8a4a6e2aabaa175b8cbb3c6bd63a176a2b0adb6a143b3cca668a569c258b169a2b4adb6a14300000100")
-	doSizedAckResp(s, pkt.AckHandle, data)
+	doAckBufSucceed(s, pkt.AckHandle, data)
 }
 
 func handleMsgMhfSendMail(s *Session, p mhfpacket.MHFPacket) {}
@@ -1272,28 +1296,34 @@ func handleMsgMhfLoadFavoriteQuest(s *Session, p mhfpacket.MHFPacket) {
 	// TODO(Andoryuuta): Save data from MsgMhfSaveFavoriteQuest and resend it here.
 	// Fist: Using a no favourites placeholder to avoid an in game error message
 	// being sent every time you use a counter when it fails to load
-	doSizedAckResp(s, pkt.AckHandle, []byte{0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
+	doAckBufSucceed(s, pkt.AckHandle, []byte{0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
 
 }
 
 func handleMsgMhfSaveFavoriteQuest(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfSaveFavoriteQuest)
-	s.QueueAck(pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
+	doAckSimpleSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
 }
 
 func handleMsgMhfRegisterEvent(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfRegisterEvent)
 	bf := byteframe.NewByteFrame()
-	bf.WriteUint32(0)
 	bf.WriteUint8(pkt.Unk2)
 	bf.WriteUint8(pkt.Unk4)
 	bf.WriteUint16(0x1142)
-	s.QueueAck(pkt.AckHandle, bf.Data())
+	doAckSimpleSucceed(s, pkt.AckHandle, bf.Data())
 }
 
 func handleMsgMhfReleaseEvent(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfReleaseEvent)
-	s.QueueAck(pkt.AckHandle, []byte{0x00, 0x41, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
+
+	// Do this ack manually because it uses a non-(0|1) error code
+	s.QueueSendMHF(&mhfpacket.MsgSysAck{
+		AckHandle:        pkt.AckHandle,
+		IsBufferResponse: false,
+		ErrorCode:        0x41,
+		AckData:          []byte{0x00, 0x00, 0x00, 0x00},
+	})
 }
 
 func handleMsgMhfTransitMessage(s *Session, p mhfpacket.MHFPacket) {}
@@ -1372,7 +1402,7 @@ func handleMsgMhfAcquireItem(s *Session, p mhfpacket.MHFPacket) {}
 
 func handleMsgMhfTransferItem(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfTransferItem)
-	s.QueueAck(pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
+	doAckSimpleSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
 }
 
 func handleMsgMhfMercenaryHuntdata(s *Session, p mhfpacket.MHFPacket) {}
@@ -1387,7 +1417,7 @@ func handleMsgMhfEnumerateQuest(s *Session, p mhfpacket.MHFPacket) {
 		fmt.Printf("questlists/list_%d.bin", pkt.QuestList)
 		stubEnumerateNoResults(s, pkt.AckHandle)
 	} else {
-		doSizedAckResp(s, pkt.AckHandle, data)
+		doAckBufSucceed(s, pkt.AckHandle, data)
 	}
 	// Update the client's rights as well:
 	updateRights(s)
@@ -1405,7 +1435,7 @@ func handleMsgMhfEnumeratePrice(s *Session, p mhfpacket.MHFPacket) {
 	//resp.WriteUint16(0) // Entry type 2 count
 	// directly lifted for now because lacking it crashes the counter on having actual events present
 	data, _ := hex.DecodeString("0000000066000003E800000000007300640100000320000000000006006401000003200000000000300064010000044C00000000007200640100000384000000000034006401000003840000000000140064010000051400000000006E006401000003E8000000000016006401000003E8000000000001006401000003200000000000430064010000057800000000006F006401000003840000000000330064010000044C00000000000B006401000003E800000000000F006401000006400000000000700064010000044C0000000000110064010000057800000000004C006401000003E8000000000059006401000006A400000000006D006401000005DC00000000004B006401000005DC000000000050006401000006400000000000350064010000070800000000006C0064010000044C000000000028006401000005DC00000000005300640100000640000000000060006401000005DC00000000005E0064010000051400000000007B006401000003E80000000000740064010000070800000000006B0064010000025800000000001B0064010000025800000000001C006401000002BC00000000001F006401000006A400000000007900640100000320000000000008006401000003E80000000000150064010000070800000000007A0064010000044C00000000000E00640100000640000000000055006401000007D0000000000002006401000005DC00000000002F0064010000064000000000002A0064010000076C00000000007E006401000002BC0000000000440064010000038400000000005C0064010000064000000000005B006401000006A400000000007D0064010000076C00000000007F006401000005DC0000000000540064010000064000000000002900640100000960000000000024006401000007D0000000000081006401000008340000000000800064010000038400000000001A006401000003E800000000002D0064010000038400000000004A006401000006A400000000005A00640100000384000000000027006401000007080000000000830064010000076C000000000040006401000006400000000000690064010000044C000000000025006401000004B000000000003100640100000708000000000082006401000003E800000000006500640100000640000000000051006401000007D000000000008C0064010000070800000000004D0064010000038400000000004E0064010000089800000000008B006401000004B000000000002E006401000009600000000000920064010000076C00000000008E00640100000514000000000068006401000004B000000000002B006401000003E800000000002C00640100000BB8000000000093006401000008FC00000000009000640100000AF0000000000094006401000006A400000000008D0064010000044C000000000052006401000005DC00000000004F006401000008980000000000970064010000070800000000006A0064010000064000000000005F00640100000384000000000026006401000008FC000000000096006401000007D00000000000980064010000076C000000000041006401000006A400000000003B006401000007080000000000360064010000083400000000009F00640100000A2800000000009A0064010000076C000000000021006401000007D000000000006300640100000A8C0000000000990064010000089800000000009E006401000007080000000000A100640100000C1C0000000000A200640100000C800000000000A400640100000DAC0000000000A600640100000C800000000000A50064010010")
-	doSizedAckResp(s, pkt.AckHandle, data)
+	doAckBufSucceed(s, pkt.AckHandle, data)
 }
 
 func handleMsgMhfEnumerateRanking(s *Session, p mhfpacket.MHFPacket) {
@@ -1422,7 +1452,7 @@ func handleMsgMhfEnumerateRanking(s *Session, p mhfpacket.MHFPacket) {
 	resp.WriteUint16(0) // Entry type 1 count
 	resp.WriteUint8(0)  // Entry type 2 count
 
-	doSizedAckResp(s, pkt.AckHandle, resp.Data())
+	doAckBufSucceed(s, pkt.AckHandle, resp.Data())
 
 	// Update the client's rights as well:
 	updateRights(s)
@@ -1462,9 +1492,9 @@ func handleMsgMhfEnumerateShop(s *Session, p mhfpacket.MHFPacket) {
 		if pkt.ShopID == 0 {
 			// Items to GCP exchange. Gou Tickets, Shiten Tickets, GP Tickets
 			data, _ := hex.DecodeString("000300033a9186fb000033860000000a000100000000000000000000000000000000097fdb1c0000067e0000000a0001000000000000000000000000000000001374db29000027c300000064000100000000000000000000000000000000")
-			doSizedAckResp(s, pkt.AckHandle, data)
+			doAckBufSucceed(s, pkt.AckHandle, data)
 		} else {
-			doSizedAckResp(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
+			doAckBufSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
 		}
 	} else if pkt.ShopType == 8 {
 		// Dive Defense sections
@@ -1472,12 +1502,12 @@ func handleMsgMhfEnumerateShop(s *Session, p mhfpacket.MHFPacket) {
 		if pkt.ShopID == 5 {
 			// diva defense skill level limited store
 			data, _ := hex.DecodeString("001f001f2c9365c1000000010000001e000a0000000000000000000a0000000000001979f1c2000000020000003c000a0000000000000000000a0000000000003e5197df000000030000003c000a0000000000000000000a000000000000219337c0000000040000001e000a0000000000000000000a00000000000009b24c9d000000140000001e000a0000000000000000000a0000000000001f1d496e000000150000001e000a0000000000000000000a0000000000003b918fcb000000160000003c000a0000000000000000000a0000000000000b7fd81c000000170000003c000a0000000000000000000a0000000000001374f239000000180000003c000a0000000000000000000a00000000000026950cba0000001c0000003c000a0000000000000000000a0000000000003797eae70000001d0000003c000a012b000000000000000a00000000000015758ad8000000050000003c00000000000000000000000a0000000000003c7035050000000600000050000a0000000000000001000a00000000000024f3b5560000000700000050000a0000000000000001000a00000000000000b600330000000800000050000a0000000000000001000a0000000000002efdce840000001900000050000a0000000000000001000a0000000000002d9365f10000001a00000050000a0000000000000001000a0000000000001979f3420000001f00000050000a012b000000000001000a0000000000003f5397cf0000002000000050000a012b000000000001000a000000000000319337c00000002100000050000a012b000000000001000a00000000000008b04cbd0000000900000064000a0000000000000002000a0000000000000b1d4b6e0000000a00000064000a0000000000000002000a0000000000003b918feb0000000b00000064000a0000000000000002000a0000000000001b7fd81c0000000c00000064000a0000000000000002000a0000000000001276f2290000000d00000064000a0000000000000002000a00000000000022950cba0000000e000000c8000a0000000000000002000a0000000000003697ead70000000f000001f4000a0000000000000003000a00000000000005758a5800000010000003e8000a0000000000000003000a0000000000003c7035250000001b000001f4000a0000000000010003000a00000000000034f3b5d60000001e00000064000a012b000000000003000a00000000000000b600030000002200000064000a0000000000010003000a000000000000")
-			doSizedAckResp(s, pkt.AckHandle, data)
+			doAckBufSucceed(s, pkt.AckHandle, data)
 		} else {
-			doSizedAckResp(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
+			doAckBufSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
 		}
 	} else {
-		doSizedAckResp(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
+		doAckBufSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
 	}
 }
 
@@ -1493,7 +1523,7 @@ func handleMsgMhfLoadHouse(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfLoadHouse)
 	// Seems to generate same response regardless of upgrade tier
 	data, _ := hex.DecodeString("0000000000000000000000000000000000000000")
-	doSizedAckResp(s, pkt.AckHandle, data)
+	doAckBufSucceed(s, pkt.AckHandle, data)
 }
 
 func handleMsgMhfOperateWarehouse(s *Session, p mhfpacket.MHFPacket) {}
@@ -1526,7 +1556,7 @@ func handleMsgMhfInfoFesta(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfInfoFesta)
 
 	// REALLY large/complex format... stubbing it out here for simplicity.
-	doSizedAckResp(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
+	doAckBufSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
 }
 
 func handleMsgMhfEntryFesta(s *Session, p mhfpacket.MHFPacket) {}
@@ -1550,7 +1580,7 @@ func handleMsgMhfStateFestaG(s *Session, p mhfpacket.MHFPacket) {
 	resp.WriteBytes([]byte{0x00, 0x00, 0x00}) // Not parsed.
 	resp.WriteUint8(0)
 
-	doSizedAckResp(s, pkt.AckHandle, resp.Data())
+	doAckBufSucceed(s, pkt.AckHandle, resp.Data())
 }
 
 func handleMsgMhfEnumerateFestaMember(s *Session, p mhfpacket.MHFPacket) {}
@@ -1562,7 +1592,7 @@ func handleMsgMhfAcquireCafeItem(s *Session, p mhfpacket.MHFPacket) {}
 func handleMsgMhfUpdateCafepoint(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfUpdateCafepoint)
 	// not sized
-	s.QueueAck(pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x8b})
+	doAckBufSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x04, 0x8b})
 }
 
 func handleMsgMhfCheckDailyCafepoint(s *Session, p mhfpacket.MHFPacket) {}
@@ -1577,7 +1607,6 @@ func handleMsgMhfCheckWeeklyStamp(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfCheckWeeklyStamp)
 
 	resp := byteframe.NewByteFrame()
-	resp.WriteUint16(0x0100)
 	resp.WriteUint16(0x000E)
 	resp.WriteUint16(0x0001)
 	resp.WriteUint16(0x0000)
@@ -1585,7 +1614,7 @@ func handleMsgMhfCheckWeeklyStamp(s *Session, p mhfpacket.MHFPacket) {
 	resp.WriteUint32(0)
 	resp.WriteUint32(0x5dddcbb3) // Timestamp
 
-	s.QueueAck(pkt.AckHandle, resp.Data())
+	doAckBufSucceed(s, pkt.AckHandle, resp.Data())
 }
 
 func handleMsgMhfExchangeWeeklyStamp(s *Session, p mhfpacket.MHFPacket) {}
@@ -1594,7 +1623,7 @@ func handleMsgMhfCreateMercenary(s *Session, p mhfpacket.MHFPacket) {}
 
 func handleMsgMhfSaveMercenary(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfSaveMercenary)
-	s.QueueAck(pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
+	doAckSimpleSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
 }
 
 func handleMsgMhfReadMercenaryW(s *Session, p mhfpacket.MHFPacket) {
@@ -1604,7 +1633,7 @@ func handleMsgMhfReadMercenaryW(s *Session, p mhfpacket.MHFPacket) {
 	if err != nil {
 		s.logger.Fatal("Failed to get savemercenary data from db", zap.Error(err))
 	}
-	doSizedAckResp(s, pkt.AckHandle, data)
+	doAckBufSucceed(s, pkt.AckHandle, data)
 }
 
 func handleMsgMhfReadMercenaryM(s *Session, p mhfpacket.MHFPacket) {
@@ -1617,12 +1646,12 @@ func handleMsgMhfEnumerateMercenaryLog(s *Session, p mhfpacket.MHFPacket) {}
 
 func handleMsgMhfEnumerateGuacot(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfEnumerateGuacot)
-	doSizedAckResp(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
+	doAckBufSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
 }
 
 func handleMsgMhfUpdateGuacot(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfUpdateGuacot)
-	s.QueueAck(pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
+	doAckSimpleSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
 }
 
 func handleMsgMhfInfoTournament(s *Session, p mhfpacket.MHFPacket) {}
@@ -1637,81 +1666,81 @@ func handleMsgMhfGetAchievement(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfGetAchievement)
 
 	achievementStruct := []struct {
-		ID uint8 // Main ID
-		Unk0 uint8 // always FF
+		ID   uint8  // Main ID
+		Unk0 uint8  // always FF
 		Unk1 uint16 // 0x05 0x00
 		Unk2 uint32 // 0x01 0x0A 0x05 0x00
 	}{
-		{ID:0,Unk0:0xFF,Unk1:0,Unk2:0},
-		{ID:1,Unk0:0xFF,Unk1:0,Unk2:0},
-		{ID:2,Unk0:0xFF,Unk1:0,Unk2:0},
-		{ID:3,Unk0:0xFF,Unk1:0,Unk2:0},
-		{ID:4,Unk0:0xFF,Unk1:0,Unk2:0},
-		{ID:5,Unk0:0xFF,Unk1:0,Unk2:0},
-		{ID:6,Unk0:0xFF,Unk1:0,Unk2:0},
-		{ID:7,Unk0:0xFF,Unk1:0,Unk2:0},
-		{ID:8,Unk0:0xFF,Unk1:0,Unk2:0},
-		{ID:9,Unk0:0xFF,Unk1:0,Unk2:0},
-		{ID:10,Unk0:0xFF,Unk1:0,Unk2:0},
-		{ID:11,Unk0:0xFF,Unk1:0,Unk2:0},
-		{ID:12,Unk0:0xFF,Unk1:0,Unk2:0},
-		{ID:13,Unk0:0xFF,Unk1:0,Unk2:0},
-		{ID:14,Unk0:0xFF,Unk1:0,Unk2:0},
-		{ID:15,Unk0:0xFF,Unk1:0,Unk2:0},
-		{ID:16,Unk0:0xFF,Unk1:0,Unk2:0},
-		{ID:17,Unk0:0xFF,Unk1:0,Unk2:0},
-		{ID:18,Unk0:0xFF,Unk1:0,Unk2:0},
-		{ID:19,Unk0:0xFF,Unk1:0,Unk2:0},
-		{ID:20,Unk0:0xFF,Unk1:0,Unk2:0},
-		{ID:21,Unk0:0xFF,Unk1:0,Unk2:0},
-		{ID:22,Unk0:0xFF,Unk1:0,Unk2:0},
-		{ID:23,Unk0:0xFF,Unk1:0,Unk2:0},
-		{ID:24,Unk0:0xFF,Unk1:0,Unk2:0},
-		{ID:25,Unk0:0xFF,Unk1:0,Unk2:0},
-		{ID:26,Unk0:0xFF,Unk1:0,Unk2:0},
-		{ID:27,Unk0:0xFF,Unk1:0,Unk2:0},
-		{ID:28,Unk0:0xFF,Unk1:0,Unk2:0},
-		{ID:29,Unk0:0xFF,Unk1:0,Unk2:0},
-		{ID:30,Unk0:0xFF,Unk1:0,Unk2:0},
-		{ID:31,Unk0:0xFF,Unk1:0,Unk2:0},
-		{ID:32,Unk0:0xFF,Unk1:0,Unk2:0},
-		{ID:33,Unk0:0xFF,Unk1:0,Unk2:0},
-		{ID:34,Unk0:0xFF,Unk1:0,Unk2:0},
-		{ID:35,Unk0:0xFF,Unk1:0,Unk2:0},
-		{ID:36,Unk0:0xFF,Unk1:0,Unk2:0},
-		{ID:37,Unk0:0xFF,Unk1:0,Unk2:0},
-		{ID:38,Unk0:0xFF,Unk1:0,Unk2:0},
-		{ID:39,Unk0:0xFF,Unk1:0,Unk2:0},
-		{ID:40,Unk0:0xFF,Unk1:0,Unk2:0},
-		{ID:41,Unk0:0xFF,Unk1:0,Unk2:0},
-		{ID:42,Unk0:0xFF,Unk1:0,Unk2:0},
-		{ID:43,Unk0:0xFF,Unk1:0,Unk2:0},
-		{ID:44,Unk0:0xFF,Unk1:0,Unk2:0},
-		{ID:45,Unk0:0xFF,Unk1:0,Unk2:0},
-		{ID:46,Unk0:0xFF,Unk1:0,Unk2:0},
-		{ID:47,Unk0:0xFF,Unk1:0,Unk2:0},
-		{ID:48,Unk0:0xFF,Unk1:0,Unk2:0},
-		{ID:49,Unk0:0xFF,Unk1:0,Unk2:0},
-		{ID:50,Unk0:0xFF,Unk1:0,Unk2:0},
-		{ID:51,Unk0:0xFF,Unk1:0,Unk2:0},
-		{ID:52,Unk0:0xFF,Unk1:0,Unk2:0},
-		{ID:53,Unk0:0xFF,Unk1:0,Unk2:0},
-		{ID:54,Unk0:0xFF,Unk1:0,Unk2:0},
-		{ID:55,Unk0:0xFF,Unk1:0,Unk2:0},
-		{ID:56,Unk0:0xFF,Unk1:0,Unk2:0},
-		{ID:57,Unk0:0xFF,Unk1:0,Unk2:0},
-		{ID:58,Unk0:0xFF,Unk1:0,Unk2:0},
-		{ID:59,Unk0:0xFF,Unk1:0,Unk2:0},
+		{ID: 0, Unk0: 0xFF, Unk1: 0, Unk2: 0},
+		{ID: 1, Unk0: 0xFF, Unk1: 0, Unk2: 0},
+		{ID: 2, Unk0: 0xFF, Unk1: 0, Unk2: 0},
+		{ID: 3, Unk0: 0xFF, Unk1: 0, Unk2: 0},
+		{ID: 4, Unk0: 0xFF, Unk1: 0, Unk2: 0},
+		{ID: 5, Unk0: 0xFF, Unk1: 0, Unk2: 0},
+		{ID: 6, Unk0: 0xFF, Unk1: 0, Unk2: 0},
+		{ID: 7, Unk0: 0xFF, Unk1: 0, Unk2: 0},
+		{ID: 8, Unk0: 0xFF, Unk1: 0, Unk2: 0},
+		{ID: 9, Unk0: 0xFF, Unk1: 0, Unk2: 0},
+		{ID: 10, Unk0: 0xFF, Unk1: 0, Unk2: 0},
+		{ID: 11, Unk0: 0xFF, Unk1: 0, Unk2: 0},
+		{ID: 12, Unk0: 0xFF, Unk1: 0, Unk2: 0},
+		{ID: 13, Unk0: 0xFF, Unk1: 0, Unk2: 0},
+		{ID: 14, Unk0: 0xFF, Unk1: 0, Unk2: 0},
+		{ID: 15, Unk0: 0xFF, Unk1: 0, Unk2: 0},
+		{ID: 16, Unk0: 0xFF, Unk1: 0, Unk2: 0},
+		{ID: 17, Unk0: 0xFF, Unk1: 0, Unk2: 0},
+		{ID: 18, Unk0: 0xFF, Unk1: 0, Unk2: 0},
+		{ID: 19, Unk0: 0xFF, Unk1: 0, Unk2: 0},
+		{ID: 20, Unk0: 0xFF, Unk1: 0, Unk2: 0},
+		{ID: 21, Unk0: 0xFF, Unk1: 0, Unk2: 0},
+		{ID: 22, Unk0: 0xFF, Unk1: 0, Unk2: 0},
+		{ID: 23, Unk0: 0xFF, Unk1: 0, Unk2: 0},
+		{ID: 24, Unk0: 0xFF, Unk1: 0, Unk2: 0},
+		{ID: 25, Unk0: 0xFF, Unk1: 0, Unk2: 0},
+		{ID: 26, Unk0: 0xFF, Unk1: 0, Unk2: 0},
+		{ID: 27, Unk0: 0xFF, Unk1: 0, Unk2: 0},
+		{ID: 28, Unk0: 0xFF, Unk1: 0, Unk2: 0},
+		{ID: 29, Unk0: 0xFF, Unk1: 0, Unk2: 0},
+		{ID: 30, Unk0: 0xFF, Unk1: 0, Unk2: 0},
+		{ID: 31, Unk0: 0xFF, Unk1: 0, Unk2: 0},
+		{ID: 32, Unk0: 0xFF, Unk1: 0, Unk2: 0},
+		{ID: 33, Unk0: 0xFF, Unk1: 0, Unk2: 0},
+		{ID: 34, Unk0: 0xFF, Unk1: 0, Unk2: 0},
+		{ID: 35, Unk0: 0xFF, Unk1: 0, Unk2: 0},
+		{ID: 36, Unk0: 0xFF, Unk1: 0, Unk2: 0},
+		{ID: 37, Unk0: 0xFF, Unk1: 0, Unk2: 0},
+		{ID: 38, Unk0: 0xFF, Unk1: 0, Unk2: 0},
+		{ID: 39, Unk0: 0xFF, Unk1: 0, Unk2: 0},
+		{ID: 40, Unk0: 0xFF, Unk1: 0, Unk2: 0},
+		{ID: 41, Unk0: 0xFF, Unk1: 0, Unk2: 0},
+		{ID: 42, Unk0: 0xFF, Unk1: 0, Unk2: 0},
+		{ID: 43, Unk0: 0xFF, Unk1: 0, Unk2: 0},
+		{ID: 44, Unk0: 0xFF, Unk1: 0, Unk2: 0},
+		{ID: 45, Unk0: 0xFF, Unk1: 0, Unk2: 0},
+		{ID: 46, Unk0: 0xFF, Unk1: 0, Unk2: 0},
+		{ID: 47, Unk0: 0xFF, Unk1: 0, Unk2: 0},
+		{ID: 48, Unk0: 0xFF, Unk1: 0, Unk2: 0},
+		{ID: 49, Unk0: 0xFF, Unk1: 0, Unk2: 0},
+		{ID: 50, Unk0: 0xFF, Unk1: 0, Unk2: 0},
+		{ID: 51, Unk0: 0xFF, Unk1: 0, Unk2: 0},
+		{ID: 52, Unk0: 0xFF, Unk1: 0, Unk2: 0},
+		{ID: 53, Unk0: 0xFF, Unk1: 0, Unk2: 0},
+		{ID: 54, Unk0: 0xFF, Unk1: 0, Unk2: 0},
+		{ID: 55, Unk0: 0xFF, Unk1: 0, Unk2: 0},
+		{ID: 56, Unk0: 0xFF, Unk1: 0, Unk2: 0},
+		{ID: 57, Unk0: 0xFF, Unk1: 0, Unk2: 0},
+		{ID: 58, Unk0: 0xFF, Unk1: 0, Unk2: 0},
+		{ID: 59, Unk0: 0xFF, Unk1: 0, Unk2: 0},
 	}
-		resp := byteframe.NewByteFrame()
-		resp.WriteUint8(uint8(len(achievementStruct))) // Entry count
-		for _, entry := range achievementStruct {
-			resp.WriteUint8(entry.ID)
-			resp.WriteUint8(entry.Unk0)
-			resp.WriteUint16(entry.Unk1)
-			resp.WriteUint32(entry.Unk2)
-		}
-		doSizedAckResp(s, pkt.AckHandle, resp.Data())
+	resp := byteframe.NewByteFrame()
+	resp.WriteUint8(uint8(len(achievementStruct))) // Entry count
+	for _, entry := range achievementStruct {
+		resp.WriteUint8(entry.ID)
+		resp.WriteUint8(entry.Unk0)
+		resp.WriteUint16(entry.Unk1)
+		resp.WriteUint32(entry.Unk2)
+	}
+	doAckBufSucceed(s, pkt.AckHandle, resp.Data())
 
 }
 
@@ -1762,7 +1791,7 @@ func handleMsgMhfInfoScenarioCounter(s *Session, p mhfpacket.MHFPacket) {
 		resp.WriteUint8(entry.Unk2)
 	}
 
-	doSizedAckResp(s, pkt.AckHandle, resp.Data())
+	doAckBufSucceed(s, pkt.AckHandle, resp.Data())
 
 	// DEBUG, DELETE ME!
 	/*
@@ -1771,19 +1800,26 @@ func handleMsgMhfInfoScenarioCounter(s *Session, p mhfpacket.MHFPacket) {
 			panic(err)
 		}
 
-		doSizedAckResp(s, pkt.AckHandle, data)
+		doAckBufSucceed(s, pkt.AckHandle, data)
 	*/
 
 }
 
 func handleMsgMhfSaveScenarioData(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfSaveScenarioData)
-	s.QueueAck(pkt.AckHandle, []byte{0x00, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40})
+
+	// Do this ack manually because it uses a non-(0|1) error code
+	s.QueueSendMHF(&mhfpacket.MsgSysAck{
+		AckHandle:        pkt.AckHandle,
+		IsBufferResponse: false,
+		ErrorCode:        0x40,
+		AckData:          []byte{0x00, 0x00, 0x00, 0x40},
+	})
 }
 
 func handleMsgMhfLoadScenarioData(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfLoadScenarioData)
-	doSizedAckResp(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
+	doAckBufSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
 }
 
 func handleMsgMhfGetBbsSnsStatus(s *Session, p mhfpacket.MHFPacket) {}
@@ -1799,7 +1835,7 @@ func handleMsgMhfGetEtcPoints(s *Session, p mhfpacket.MHFPacket) {
 	resp.WriteUint32(14)
 	resp.WriteUint32(14)
 
-	doSizedAckResp(s, pkt.AckHandle, resp.Data())
+	doAckBufSucceed(s, pkt.AckHandle, resp.Data())
 }
 
 func handleMsgMhfUpdateEtcPoint(s *Session, p mhfpacket.MHFPacket) {}
@@ -1812,13 +1848,13 @@ func handleMsgMhfGetMyhouseInfo(s *Session, p mhfpacket.MHFPacket) {
 	// parity with the only packet capture available
 	//body[0] = 10;
 	//body[21] = 10;
-	doSizedAckResp(s, pkt.AckHandle, body)
+	doAckBufSucceed(s, pkt.AckHandle, body)
 }
 
 func handleMsgMhfUpdateMyhouseInfo(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfUpdateMyhouseInfo)
 	// looks to be the sized datachunk from above without the size bytes, quite possibly intended to be persistent
-	s.QueueAck(pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
+	doAckSimpleSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
 }
 
 func handleMsgMhfGetWeeklySchedule(s *Session, p mhfpacket.MHFPacket) {
@@ -1861,7 +1897,7 @@ func handleMsgMhfGetWeeklySchedule(s *Session, p mhfpacket.MHFPacket) {
 		resp.WriteUint16(es.Unk1)
 	}
 
-	doSizedAckResp(s, pkt.AckHandle, resp.Data())
+	doAckBufSucceed(s, pkt.AckHandle, resp.Data())
 }
 
 func handleMsgMhfEnumerateInvGuild(s *Session, p mhfpacket.MHFPacket) {}
@@ -1872,7 +1908,7 @@ func handleMsgMhfStampcardStamp(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfStampcardStamp)
 	// TODO: Work out where it gets existing stamp count from, its format and then
 	// update the actual sent values to be correct
-	doSizedAckResp(s, pkt.AckHandle, []byte{0x03, 0xe7, 0x03, 0xe7, 0x02, 0x99, 0x02, 0x9c, 0x00, 0x00, 0x00, 0x00, 0x14, 0xf8, 0x69, 0x54})
+	doAckBufSucceed(s, pkt.AckHandle, []byte{0x03, 0xe7, 0x03, 0xe7, 0x02, 0x99, 0x02, 0x9c, 0x00, 0x00, 0x00, 0x00, 0x14, 0xf8, 0x69, 0x54})
 }
 
 func handleMsgMhfStampcardPrize(s *Session, p mhfpacket.MHFPacket) {}
@@ -1888,9 +1924,9 @@ func handleMsgMhfLoadPlateData(s *Session, p mhfpacket.MHFPacket) {
 	}
 
 	if len(data) > 0 {
-		doSizedAckResp(s, pkt.AckHandle, data)
+		doAckBufSucceed(s, pkt.AckHandle, data)
 	} else {
-		doSizedAckResp(s, pkt.AckHandle, []byte{})
+		doAckBufSucceed(s, pkt.AckHandle, []byte{})
 	}
 }
 
@@ -1939,7 +1975,7 @@ func handleMsgMhfSavePlateData(s *Session, p mhfpacket.MHFPacket) {
 		}
 	}
 
-	s.QueueAck(pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
+	doAckSimpleSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
 }
 
 func handleMsgMhfLoadPlateBox(s *Session, p mhfpacket.MHFPacket) {
@@ -1951,9 +1987,9 @@ func handleMsgMhfLoadPlateBox(s *Session, p mhfpacket.MHFPacket) {
 	}
 
 	if len(data) > 0 {
-		doSizedAckResp(s, pkt.AckHandle, data)
+		doAckBufSucceed(s, pkt.AckHandle, data)
 	} else {
-		doSizedAckResp(s, pkt.AckHandle, []byte{})
+		doAckBufSucceed(s, pkt.AckHandle, []byte{})
 	}
 }
 
@@ -2007,7 +2043,7 @@ func handleMsgMhfSavePlateBox(s *Session, p mhfpacket.MHFPacket) {
 			s.logger.Fatal("Failed to update platedata savedata in db", zap.Error(err))
 		}
 	}
-	s.QueueAck(pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
+	doAckSimpleSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
 }
 
 func handleMsgMhfReadGuildcard(s *Session, p mhfpacket.MHFPacket) {
@@ -2023,7 +2059,7 @@ func handleMsgMhfReadGuildcard(s *Session, p mhfpacket.MHFPacket) {
 	resp.WriteUint32(0)
 	resp.WriteUint32(0)
 
-	doSizedAckResp(s, pkt.AckHandle, resp.Data())
+	doAckBufSucceed(s, pkt.AckHandle, resp.Data())
 }
 
 func handleMsgMhfUpdateGuildcard(s *Session, p mhfpacket.MHFPacket) {}
@@ -2041,7 +2077,7 @@ func handleMsgMhfReadBeatLevel(s *Session, p mhfpacket.MHFPacket) {
 		resp.WriteUint32(1)
 	}
 
-	doSizedAckResp(s, pkt.AckHandle, resp.Data())
+	doAckBufSucceed(s, pkt.AckHandle, resp.Data())
 }
 
 func handleMsgMhfUpdateBeatLevel(s *Session, p mhfpacket.MHFPacket) {}
@@ -2059,7 +2095,7 @@ func handleMsgMhfGetAdditionalBeatReward(s *Session, p mhfpacket.MHFPacket) {
 	// Actual response in packet captures are all just giant batches of null bytes
 	// I'm assuming this is because it used to be tied to an actual event and
 	// they never bothered killing off the packet when they made it static
-	doSizedAckResp(s, pkt.AckHandle, make([]byte, 0x104))
+	doAckBufSucceed(s, pkt.AckHandle, make([]byte, 0x104))
 }
 
 func handleMsgMhfGetFixedSeibatuRankingTable(s *Session, p mhfpacket.MHFPacket) {}
@@ -2077,11 +2113,15 @@ func handleMsgMhfGetEarthStatus(s *Session, p mhfpacket.MHFPacket) {
 
 	// TODO(Andoryuuta): Track down format for this data,
 	//	it can somehow be parsed as 8*uint32 chunks if the header is right.
-	resp := byteframe.NewByteFrame()
-	resp.WriteUint32(0)
-	resp.WriteUint32(0)
+	/*
+		BEFORE ack-refactor:
+			resp := byteframe.NewByteFrame()
+			resp.WriteUint32(0)
+			resp.WriteUint32(0)
 
-	s.QueueAck(pkt.AckHandle, resp.Data())
+			s.QueueAck(pkt.AckHandle, resp.Data())
+	*/
+	doAckSimpleSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
 }
 
 func handleMsgMhfLoadPartner(s *Session, p mhfpacket.MHFPacket) {
@@ -2093,12 +2133,12 @@ func handleMsgMhfLoadPartner(s *Session, p mhfpacket.MHFPacket) {
 		s.logger.Fatal("Failed to get partner savedata from db", zap.Error(err))
 	}
 	if len(data) > 0 {
-		doSizedAckResp(s, pkt.AckHandle, data)
+		doAckBufSucceed(s, pkt.AckHandle, data)
 	} else {
-		doSizedAckResp(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
+		doAckBufSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
 	}
 	// TODO(Andoryuuta): Figure out unusual double ack. One sized, one not.
-	s.QueueAck(pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
+	doAckSimpleSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
 }
 
 func handleMsgMhfSavePartner(s *Session, p mhfpacket.MHFPacket) {
@@ -2112,7 +2152,7 @@ func handleMsgMhfSavePartner(s *Session, p mhfpacket.MHFPacket) {
 	if err != nil {
 		s.logger.Fatal("Failed to update partner savedata in db", zap.Error(err))
 	}
-	s.QueueAck(pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
+	doAckSimpleSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
 }
 
 func handleMsgMhfGetGuildMissionList(s *Session, p mhfpacket.MHFPacket) {}
@@ -2121,7 +2161,7 @@ func handleMsgMhfGetGuildMissionRecord(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfGetGuildMissionRecord)
 
 	// No guild mission records = 0x190 empty bytes
-	doSizedAckResp(s, pkt.AckHandle, make([]byte, 0x190))
+	doAckBufSucceed(s, pkt.AckHandle, make([]byte, 0x190))
 }
 
 func handleMsgMhfAddGuildMissionCount(s *Session, p mhfpacket.MHFPacket) {}
@@ -2140,9 +2180,9 @@ func handleMsgMhfLoadOtomoAirou(s *Session, p mhfpacket.MHFPacket) {
 	}
 
 	if len(data) > 0 {
-		doSizedAckResp(s, pkt.AckHandle, data)
+		doAckBufSucceed(s, pkt.AckHandle, data)
 	} else {
-		doSizedAckResp(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
+		doAckBufSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
 	}
 }
 
@@ -2157,7 +2197,7 @@ func handleMsgMhfSaveOtomoAirou(s *Session, p mhfpacket.MHFPacket) {
 	if err != nil {
 		s.logger.Fatal("Failed to update partnyaa savedata in db", zap.Error(err))
 	}
-	s.QueueAck(pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
+	doAckSimpleSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
 }
 
 func handleMsgMhfEnumerateGuildTresure(s *Session, p mhfpacket.MHFPacket) {}
@@ -2187,13 +2227,13 @@ func handleMsgMhfLoadDecoMyset(s *Session, p mhfpacket.MHFPacket) {
 	}
 
 	if len(data) > 0 {
-		doSizedAckResp(s, pkt.AckHandle, data)
-		//doSizedAckResp(s, pkt.AckHandle, data)
+		doAckBufSucceed(s, pkt.AckHandle, data)
+		//doAckBufSucceed(s, pkt.AckHandle, data)
 	} else {
 		// set first byte to 1 to avoid pop up every time without save
 		body := make([]byte, 0x226)
 		body[0] = 1
-		doSizedAckResp(s, pkt.AckHandle, body)
+		doAckBufSucceed(s, pkt.AckHandle, body)
 	}
 }
 
@@ -2252,8 +2292,7 @@ func handleMsgMhfSaveDecoMyset(s *Session, p mhfpacket.MHFPacket) {
 			s.logger.Fatal("Failed to update decomyset savedata in db", zap.Error(err))
 		}
 	}
-	s.QueueAck(pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
-
+	doAckSimpleSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
 }
 
 func handleMsgMhfReserve010F(s *Session, p mhfpacket.MHFPacket) {}
@@ -2281,12 +2320,12 @@ func handleMsgMhfLoadHunterNavi(s *Session, p mhfpacket.MHFPacket) {
 	}
 
 	if len(data) > 0 {
-		doSizedAckResp(s, pkt.AckHandle, data)
+		doAckBufSucceed(s, pkt.AckHandle, data)
 	} else {
 		// set first byte to 1 to avoid pop up every time without save
 		body := make([]byte, 0x226)
 		body[0] = 1
-		doSizedAckResp(s, pkt.AckHandle, body)
+		doAckBufSucceed(s, pkt.AckHandle, body)
 	}
 }
 
@@ -2330,7 +2369,7 @@ func handleMsgMhfSaveHunterNavi(s *Session, p mhfpacket.MHFPacket) {
 			s.logger.Fatal("Failed to update hunternavi savedata in db", zap.Error(err))
 		}
 	}
-	s.QueueAck(pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
+	doAckSimpleSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
 }
 
 func handleMsgMhfRegistSpabiTime(s *Session, p mhfpacket.MHFPacket) {}
@@ -2339,13 +2378,13 @@ func handleMsgMhfGetGuildWeeklyBonusMaster(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfGetGuildWeeklyBonusMaster)
 
 	// Values taken from brand new guild capture
-	doSizedAckResp(s, pkt.AckHandle, make([]byte, 0x28))
+	doAckBufSucceed(s, pkt.AckHandle, make([]byte, 0x28))
 }
 func handleMsgMhfGetGuildWeeklyBonusActiveCount(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfGetGuildWeeklyBonusActiveCount)
 
 	// Values taken from brand new guild capture
-	doSizedAckResp(s, pkt.AckHandle, make([]byte, 0x03))
+	doAckBufSucceed(s, pkt.AckHandle, make([]byte, 0x03))
 }
 
 func handleMsgMhfAddGuildWeeklyBonusExceptionalUser(s *Session, p mhfpacket.MHFPacket) {}
@@ -2393,7 +2432,7 @@ func handleMsgMhfGetTowerInfo(s *Session, p mhfpacket.MHFPacket) {
 
 func handleMsgMhfPostTowerInfo(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfPostTowerInfo)
-	s.QueueAck(pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
+	doAckSimpleSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
 }
 
 func handleMsgMhfGetGemInfo(s *Session, p mhfpacket.MHFPacket) {}
@@ -2466,7 +2505,7 @@ func handleMsgMhfGetEarthValue(s *Session, p mhfpacket.MHFPacket) {
 		resp.WriteUint32(v.Unk5)
 	}
 
-	doSizedAckResp(s, pkt.AckHandle, resp.Data())
+	doAckBufSucceed(s, pkt.AckHandle, resp.Data())
 }
 
 func handleMsgMhfDebugPostValue(s *Session, p mhfpacket.MHFPacket) {}
@@ -2507,9 +2546,7 @@ func handleMsgMhfGetPaperData(s *Session, p mhfpacket.MHFPacket) {
 	if err != nil {
 		panic(err)
 	}
-	doSizedAckResp(s, pkt.AckHandle, data)
-	//	s.QueueAck(pkt.AckHandle, data)
-
+	doAckBufSucceed(s, pkt.AckHandle, data)
 }
 
 func handleMsgMhfGetNotice(s *Session, p mhfpacket.MHFPacket) {}
@@ -2518,7 +2555,7 @@ func handleMsgMhfPostNotice(s *Session, p mhfpacket.MHFPacket) {}
 
 func handleMsgMhfGetBoostTime(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfGetBoostTime)
-	doSizedAckResp(s, pkt.AckHandle, []byte{})
+	doAckBufSucceed(s, pkt.AckHandle, []byte{})
 
 	// Update the client's rights as well:
 	updateRights(s)
@@ -2530,7 +2567,7 @@ func handleMsgMhfPostBoostTime(s *Session, p mhfpacket.MHFPacket) {
 
 func handleMsgMhfGetBoostTimeLimit(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfGetBoostTimeLimit)
-	doSizedAckResp(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
+	doAckBufSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
 }
 
 func handleMsgMhfPostBoostTimeLimit(s *Session, p mhfpacket.MHFPacket) {}
@@ -2551,12 +2588,15 @@ func handleMsgMhfPostCafeDurationBonusReceived(s *Session, p mhfpacket.MHFPacket
 
 func handleMsgMhfGetGachaPoint(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfGetGachaPoint)
-	// temp values from actual char, 4 bytes header, int32s for real gacha, trial gacha, frontier points
+	// temp values from actual char, int32s for real gacha, trial gacha, frontier points
 	// presumably should be made persistent and into another database entry
-	data, _ := hex.DecodeString("0100000C0000000000000312000001E80010")
-	s.QueueAck(pkt.AckHandle, data)
 
-	// this sure breaks this horrifically 	doSizedAckResp(s, pkt.AckHandle, []byte{})
+	resp := byteframe.NewByteFrame()
+	resp.WriteInt32(0)   // Real Gacha Points?
+	resp.WriteInt32(786) // Trial Gacha Point?
+	resp.WriteInt32(488) // Frontier Points?
+
+	doAckBufSucceed(s, pkt.AckHandle, resp.Data())
 }
 
 func handleMsgMhfUseGachaPoint(s *Session, p mhfpacket.MHFPacket) {}
@@ -2579,7 +2619,8 @@ func handleMsgMhfGetTinyBin(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfGetTinyBin)
 	// requested after conquest quests
 	// 00 02 01 req returns 01 00 00 00 so using that as general placeholder
-	s.QueueAck(pkt.AckHandle, []byte{0x01, 0x00, 0x00, 0x00})
+	//s.QueueAck(pkt.AckHandle, []byte{0x01, 0x00, 0x00, 0x00})
+	doAckBufSucceed(s, pkt.AckHandle, []byte{})
 }
 
 func handleMsgMhfPostTinyBin(s *Session, p mhfpacket.MHFPacket) {}
@@ -2600,10 +2641,10 @@ func handleMsgMhfGetGuildTargetMemberNum(s *Session, p mhfpacket.MHFPacket) {
 
 	if err != nil {
 		s.logger.Warn("failed to find guild")
-		doSizedAckResp(s, pkt.AckHandle, make([]byte, 4))
+		doAckBufSucceed(s, pkt.AckHandle, make([]byte, 4))
 		return
 	} else if guild == nil {
-		doSizedAckResp(s, pkt.AckHandle, make([]byte, 4))
+		doAckBufSucceed(s, pkt.AckHandle, make([]byte, 4))
 		return
 	}
 
@@ -2612,19 +2653,19 @@ func handleMsgMhfGetGuildTargetMemberNum(s *Session, p mhfpacket.MHFPacket) {
 	bf.WriteUint16(0x0)
 	bf.WriteUint16(guild.MemberCount - 1)
 
-	doSizedAckResp(s, pkt.AckHandle, bf.Data())
+	doAckBufSucceed(s, pkt.AckHandle, bf.Data())
 }
 
 func handleMsgMhfGetBoostRight(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfGetBoostRight)
-	doSizedAckResp(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
+	doAckBufSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
 }
 
 func handleMsgMhfStartBoostTime(s *Session, p mhfpacket.MHFPacket) {}
 
 func handleMsgMhfPostBoostTimeQuestReturn(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfPostBoostTimeQuestReturn)
-	s.QueueAck(pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
+	doAckSimpleSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
 }
 
 func handleMsgMhfGetBoxGachaInfo(s *Session, p mhfpacket.MHFPacket) {}
@@ -2660,7 +2701,7 @@ func handleMsgMhfGetTenrouirai(s *Session, p mhfpacket.MHFPacket) {
 	if err != nil {
 		panic(err)
 	}
-	doSizedAckResp(s, pkt.AckHandle, data)
+	doAckBufSucceed(s, pkt.AckHandle, data)
 
 }
 
@@ -2684,7 +2725,7 @@ func handleMsgMhfGetCaAchievementHist(s *Session, p mhfpacket.MHFPacket) {}
 
 func handleMsgMhfSetCaAchievementHist(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfSetCaAchievementHist)
-	s.QueueAck(pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
+	doAckSimpleSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
 }
 
 func handleMsgMhfGetKeepLoginBoostStatus(s *Session, p mhfpacket.MHFPacket) {
@@ -2736,7 +2777,7 @@ func handleMsgMhfGetKeepLoginBoostStatus(s *Session, p mhfpacket.MHFPacket) {
 		resp.WriteUint8(v.Available)
 		resp.WriteUint32(v.Expiration)
 	}
-	doSizedAckResp(s, pkt.AckHandle, resp.Data())
+	doAckBufSucceed(s, pkt.AckHandle, resp.Data())
 }
 
 func handleMsgMhfUseKeepLoginBoost(s *Session, p mhfpacket.MHFPacket) {
@@ -2745,7 +2786,6 @@ func handleMsgMhfUseKeepLoginBoost(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfUseKeepLoginBoost)
 	var t = time.Now().In(time.FixedZone("UTC+9", 9*60*60))
 	resp := byteframe.NewByteFrame()
-	resp.WriteUint32(0x1000005)
 	resp.WriteUint8(0)
 	// response is end timestamp based on input
 	if pkt.BoostWeekUsed == 1 {
@@ -2759,7 +2799,7 @@ func handleMsgMhfUseKeepLoginBoost(s *Session, p mhfpacket.MHFPacket) {
 	} else if pkt.BoostWeekUsed == 5 {
 		resp.WriteUint32(uint32(t.Add(240 * time.Hour).Unix())) // Week 1 Timestamp, Festi start?
 	}
-	s.QueueAck(pkt.AckHandle, resp.Data())
+	doAckBufSucceed(s, pkt.AckHandle, resp.Data())
 }
 
 func handleMsgMhfGetUdSchedule(s *Session, p mhfpacket.MHFPacket) {
@@ -2783,7 +2823,7 @@ func handleMsgMhfGetUdSchedule(s *Session, p mhfpacket.MHFPacket) {
 	resp.WriteUint16(0x02)                                              // Unk
 	resp.WriteUint16(0x02)                                              // Unk
 
-	doSizedAckResp(s, pkt.AckHandle, resp.Data())
+	doAckBufSucceed(s, pkt.AckHandle, resp.Data())
 }
 
 func handleMsgMhfGetUdInfo(s *Session, p mhfpacket.MHFPacket) {
@@ -2809,14 +2849,14 @@ func handleMsgMhfGetUdInfo(s *Session, p mhfpacket.MHFPacket) {
 		resp.WriteUint32(uint32(udInfo.EndTime.Unix()))
 	}
 
-	doSizedAckResp(s, pkt.AckHandle, resp.Data())
+	doAckBufSucceed(s, pkt.AckHandle, resp.Data())
 }
 
 func handleMsgMhfGetKijuInfo(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfGetKijuInfo)
 	// Temporary canned response
 	data, _ := hex.DecodeString("04965C959782CC8B468EEC00000000000000000000000000000000000000000000815C82A082E782B582DC82A982BA82CC82AB82B682E3815C0A965C959782C682CD96D282E98E7682A281420A95B782AD8ED282C997458B4382F0975E82A682E98142000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001018BAD8C8282CC8B468EEC00000000000000000000000000000000000000000000815C82AB82E582A482B082AB82CC82AB82B682E3815C0A8BAD8C8282C682CD8BAD82A290BA904681420A95B782AD8ED282CC97CD82F08CA482AC909F82DC82B78142200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000003138C8B8F5782CC8B468EEC00000000000000000000000000000000000000000000815C82AF82C182B582E382A482CC82AB82B682E3815C0A8C8B8F5782C682CD8A6D8CC582BD82E9904D978A81420A8F5782DF82E982D982C782C98EEB906C82BD82BF82CC90B8905F97CD82C682C882E9814200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000041189CC8CEC82CC8B468EEC00000000000000000000000000000000000000000000815C82A482BD82DC82E082E882CC82AB82B682E3815C0A89CC8CEC82C682CD89CC955082CC8CEC82E881420A8F5782DF82E982D982C782C98EEB906C82BD82BF82CC8E7882A682C682C882E9814220000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000212")
-	doSizedAckResp(s, pkt.AckHandle, data)
+	doAckBufSucceed(s, pkt.AckHandle, data)
 }
 
 func handleMsgMhfSetKiju(s *Session, p mhfpacket.MHFPacket) {}
@@ -2827,14 +2867,14 @@ func handleMsgMhfGetUdMyPoint(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfGetUdMyPoint)
 	// Temporary canned response
 	data, _ := hex.DecodeString("00040000013C000000FA000000000000000000040000007E0000003C02000000000000000000000000000000000000000000000000000002000004CC00000438000000000000000000000000000000000000000000000000000000020000026E00000230000000000000000000020000007D0000007D000000000000000000000000000000000000000000000000000000")
-	doSizedAckResp(s, pkt.AckHandle, data)
+	doAckBufSucceed(s, pkt.AckHandle, data)
 }
 
 func handleMsgMhfGetUdTotalPointInfo(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfGetUdTotalPointInfo)
 	// Temporary canned response
 	data, _ := hex.DecodeString("00000000000007A12000000000000F424000000000001E848000000000002DC6C000000000003D090000000000004C4B4000000000005B8D8000000000006ACFC000000000007A1200000000000089544000000000009896800000000000E4E1C00000000001312D0000000000017D78400000000001C9C3800000000002160EC00000000002625A000000000002AEA5400000000002FAF0800000000003473BC0000000000393870000000000042C1D800000000004C4B40000000000055D4A800000000005F5E10000000000008954400000000001C9C3800000000003473BC00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001020300000000000000000000000000000000000000000000000000000000000000000000000000000000101F1420")
-	doSizedAckResp(s, pkt.AckHandle, data)
+	doAckBufSucceed(s, pkt.AckHandle, data)
 }
 
 func handleMsgMhfGetUdBonusQuestInfo(s *Session, p mhfpacket.MHFPacket) {
@@ -2862,14 +2902,14 @@ func handleMsgMhfGetUdBonusQuestInfo(s *Session, p mhfpacket.MHFPacket) {
 		resp.WriteUint8(q.Unk6)
 	}
 
-	doSizedAckResp(s, pkt.AckHandle, resp.Data())
+	doAckBufSucceed(s, pkt.AckHandle, resp.Data())
 }
 
 func handleMsgMhfGetUdSelectedColorInfo(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfGetUdSelectedColorInfo)
 
 	// Unk
-	doSizedAckResp(s, pkt.AckHandle, []byte{0x00, 0x01, 0x01, 0x01, 0x02, 0x03, 0x02, 0x00, 0x00})
+	doAckBufSucceed(s, pkt.AckHandle, []byte{0x00, 0x01, 0x01, 0x01, 0x02, 0x03, 0x02, 0x00, 0x00})
 }
 
 func handleMsgMhfGetUdMonsterPoint(s *Session, p mhfpacket.MHFPacket) {
@@ -3001,7 +3041,7 @@ func handleMsgMhfGetUdMonsterPoint(s *Session, p mhfpacket.MHFPacket) {
 		resp.WriteUint16(mp.Points)
 	}
 
-	doSizedAckResp(s, pkt.AckHandle, resp.Data())
+	doAckBufSucceed(s, pkt.AckHandle, resp.Data())
 }
 
 func handleMsgMhfGetUdDailyPresentList(s *Session, p mhfpacket.MHFPacket) {}
@@ -3016,7 +3056,7 @@ func handleMsgMhfGetRewardSong(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfGetRewardSong)
 	// Temporary canned response
 	data, _ := hex.DecodeString("0100001600000A5397DF00000000000000000000000000000000")
-	doSizedAckResp(s, pkt.AckHandle, data)
+	doAckBufSucceed(s, pkt.AckHandle, data)
 }
 
 func handleMsgMhfUseRewardSong(s *Session, p mhfpacket.MHFPacket) {}
@@ -3029,7 +3069,7 @@ func handleMsgMhfGetUdMyRanking(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfGetUdMyRanking)
 	// Temporary canned response
 	data, _ := hex.DecodeString("00000515000005150000CEB4000003CE000003CE0000CEB44D49444E494748542D414E47454C0000000000000000000000")
-	doSizedAckResp(s, pkt.AckHandle, data)
+	doAckBufSucceed(s, pkt.AckHandle, data)
 }
 
 func handleMsgMhfAcquireMonthlyReward(s *Session, p mhfpacket.MHFPacket) {
@@ -3038,7 +3078,7 @@ func handleMsgMhfAcquireMonthlyReward(s *Session, p mhfpacket.MHFPacket) {
 	resp := byteframe.NewByteFrame()
 	resp.WriteUint32(0)
 
-	doSizedAckResp(s, pkt.AckHandle, resp.Data())
+	doAckBufSucceed(s, pkt.AckHandle, resp.Data())
 }
 
 func handleMsgMhfGetUdTacticsPoint(s *Session, p mhfpacket.MHFPacket) {
@@ -3046,7 +3086,7 @@ func handleMsgMhfGetUdTacticsPoint(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfGetUdTacticsPoint)
 	// Temporary canned response
 	data, _ := hex.DecodeString("000000A08F0BE2DAE30BE30AE2EAE2E9E2E8E2F5E2F3E2F2E2F1E2BB")
-	doSizedAckResp(s, pkt.AckHandle, data)
+	doAckBufSucceed(s, pkt.AckHandle, data)
 }
 
 func handleMsgMhfAddUdTacticsPoint(s *Session, p mhfpacket.MHFPacket) {
@@ -3061,7 +3101,7 @@ func handleMsgMhfGetUdTacticsRewardList(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfGetUdTacticsRewardList)
 	// Temporary canned response
 	data, _ := hex.DecodeString("000094000000010732DD00010000000000010732DD00010100000000C8071F2800050100000000C80705C000050000000001901A000001F40000000001901A000001F40100000002580705C00005000000000258071F2800050100000003201A000003E80100000003201A000003E80000000003E81A000004B00100000003E81A000004B00000000004B01A000005DC0100000004B01A000005DC0000000005781A000008FC0100000005781A000008FC0000000006401A000009C40000000006401A000009C40100000007081A00000BB80100000007081A00000BB80000000007D00725FA00010000000007D01A00000CE40000000007D00725FC00010100000007D00725FB00010100000007D00725FA00010100000007D01A00000CE40100000007D00725FC00010000000007D00725FB0001000000000BB80705C00005000000000BB8071F280005010000000FA01A00000DAC000000000FA01A00000DAC0100000013880705C00005000000001388071F2800050100000017700725FE00010100000017700725FD00010100000017700725FF00010100000017700725FD00010000000017700725FE00010000000017700725FF0001000000001B581A00000E74000000001B581A00000E74010000001F400727D00005010000001F400727D000050000000023281A00000FA00000000023281A00000FA00100000027100736EF000100000000271007369600010100000027100736EF00010100000027100736EF0001000000002EE00727D10005010000002EE00727D100050000000036B01D000000010100000036B01D00000001000000003A980737DB0001010000003A980736EF00010000000046500725E600010100000046500725E60001000000004E200738C90001010000004E200736EF00010000000055F01A000010680100000055F01A000010680000000061A80736EF00010000000061A80739A600010100000065900727D200050000000065900727D20005010000007530073A0600010100000075300736EF00010000000075300736EF00010000000075300736EF00010100000084D01D000000020000000084D01D00000002010000009C400727D30005010000009C400727D3000500000000B3B01A0000119400000000B3B01A0000119401000000C3500727D4000500000000C3500727D4000501000000D2F01D0000000300000000D2F01D0000000301000000EA600736EF000100000000EA600736EF000101000000F6181A0000125C00000000F6181A0000125C0100000111700727D500050000000111700727D500050100000119400727D600050100000119400727D600050000000121101D000000040000000121101D000000040100000130B01A000013880000000130B01A000013880100000140500727D700050000000140500727D700050100000148201D000000050000000148201D00000005010000014FF01A000014B4000000014FF01A000014B4010000015F900736EF0001000000015F900736EF00010100000167600729EA00050000000167600729EA0005010000016F301D00000006010000016F301D00000006000000017ED00729EB0005000000017ED00729EB0005010000018E701A0000157C010000018E701A0000157C0000000196401D000000070000000196401D00000007010000019E100729EC0005000000019E100729EC000501000001ADB00727CD000100000001ADB00727CD000101000001BD501D0000000800000001BD501D0000000801000001CCF01A0000164401000001CCF01A0000164400000001E4601D0000000901000001E4601D0000000900000001EC300727CC000101000001EC300727CC0001000000020B701D0000000A000000020B701D0000000A010000023A501A0000170C010000023A501A0000170C0000000249F00736EF00010100000249F00736EF00010000000271001A000017D40100000271001A000017D400000002A7B01A0000189C01000002A7B01A0000189C00000002BF200736EF000100000002BF200736EF000101000002D6901A0000196401000002D6901A00001964000000030D400727CB0001000000030D400727CB00010100000343F01A00001A2C0100000343F01A00001A2C0000000372D0072CB0000F0000000372D0072CB0000F01000003A9801A00001BBC00000003A9801A00001BBC01000003F7A01A000003E800010003F7A01A000003E80101000445C01A000003E80101000445C01A000003E80001005E000000020704020005010000000002070402000500000000000307040200140000000000030704020014010000000005071D200003010000000005071D20000300000000000607040200140100000000060704020014000000000008071D210003010000000008071D21000300000000000A070402001401000000000A070402001400000000000C0722EC000501000000000C0722ED000500000000000C0722F2000500000000000C0722EC000500000000000C0722EF000500000000000C0722ED000501000000000C0722F2000501000000000C0722EF000501000000000D1A000003E801000000000D1A000003E800000000000F07357C000501000000000F07357D000501000000000F07357C000500000000000F07357D00050000000000111A000007D00000000000111A000007D00100000000141C00000001000000000014071D2200030000000000141C00000001010000000014071D22000301000000001607357D000701000000001607357C00070000000000160704020028000000000016070402002801000000001607357C000701000000001607357D0007000000000018071D270003000000000018071D27000301000000001A1A00000BB800000000001A1A00000BB801000000001C07357D000701000000001C070402002801000000001C07357D000700000000001C07357C000700000000001C070402002800000000001C07357C000701000000001E070402003C01000000001E070402003C000000000020071D26000301000000002007357C000700000000002007357D000700000000002007357C000701000000002007357D0007010000000020071D260003000000000023071D280003010000000023071D28000300000000002A070402003C00000000002A070402003C01000000002C0725EE000100000000002C0725EE000101000000002E070402005001000000002E07357D000A01000000002E070402005000000000002E07357C000A00000000002E07357D000A00000000002E07357C000A0100000000300725ED00010000000000300725ED0001010000000032071D200003010000000032071D200003000000000034072C7B0001000000000034072C7B0001010000000037071D210003000000000037071D21000301000000003C0722F1000A00000000003C0722F1000A01000000004107040200500000000000410704020050010000000046071D220003010000000046071D22000300000000004B071D27000301000000004B071D2700030000000000500722F1000F0100000000500722F1000F0000000000550704020050010000000055070402005000000000005A071D26000301000000005A071D26000300000000005F071D28000300000000005F071D2800030100000000641A0000C3500100000000641A0000C3500000002607000E00C8000000010000000307000F0032000000010000000307001000320000000100000003070011003200000001000000030700120032000000010000000307000E0096000000040000000A07000F0028000000040000000A0700100028000000040000000A0700110028000000040000000A0700120028000000040000000A07000E00640000000B0000001907000F001E0000000B00000019070010001E0000000B00000019070011001E0000000B00000019070012001E0000000B0000001907000E00320000001A0000002807000F00140000001A0000002807001000140000001A0000002807001100140000001A0000002807001200140000001A0000002807000E001E000000290000004607000F000A0000002900000046070010000A000000290000004607001100010000002900000046070012000A000000290000004607000E0019000000470000006407000F0008000000470000006407001000080000004700000064070011000100000047000000640700120008000000470000006407000E000F000000650000009607000F0006000000650000009607001000010000006500000096070011000600000065000000960700120006000000650000009607000E000500000097000001F407000F000500000097000001F4070010000500000097000001F4")
-	doSizedAckResp(s, pkt.AckHandle, data)
+	doAckBufSucceed(s, pkt.AckHandle, data)
 }
 
 func handleMsgMhfGetUdTacticsLog(s *Session, p mhfpacket.MHFPacket) {}
@@ -3072,18 +3112,18 @@ func handleMsgMhfGetEquipSkinHist(s *Session, p mhfpacket.MHFPacket) {
 	// presumably divided by 5 sections for 5120 armour IDs covered
 	// +10,000 for actual ID to be unlocked by each bit
 	// Returning 3200 bytes of FF just unlocks everything for now
-	doSizedAckResp(s, pkt.AckHandle, bytes.Repeat([]byte{0xFF}, 0xC80))
+	doAckBufSucceed(s, pkt.AckHandle, bytes.Repeat([]byte{0xFF}, 0xC80))
 }
 
 func handleMsgMhfUpdateEquipSkinHist(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfUpdateEquipSkinHist)
 	// sends a raw armour ID back that needs to be mapped into the persistent bitmask above (-10,000)
-	s.QueueAck(pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
+	doAckSimpleSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
 }
 
 func handleMsgMhfGetUdTacticsFollower(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfGetUdTacticsFollower)
-	doSizedAckResp(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
+	doAckBufSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
 }
 
 func handleMsgMhfSetUdTacticsFollower(s *Session, p mhfpacket.MHFPacket) {}
@@ -3094,7 +3134,7 @@ func handleMsgMhfUseUdShopCoin(s *Session, p mhfpacket.MHFPacket) {}
 
 func handleMsgMhfGetEnhancedMinidata(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfGetEnhancedMinidata)
-	doSizedAckResp(s, pkt.AckHandle, []byte{0x00})
+	doAckBufSucceed(s, pkt.AckHandle, []byte{0x00})
 }
 
 func handleMsgMhfSetEnhancedMinidata(s *Session, p mhfpacket.MHFPacket) {
@@ -3112,12 +3152,12 @@ func handleMsgMhfGuildHuntdata(s *Session, p mhfpacket.MHFPacket) {}
 func handleMsgMhfAddKouryouPoint(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfAddKouryouPoint)
 	// Adds pkt.KouryouPoints to the value in get kouryou points, not sure if the actual value is saved for sending in MsgMhfGetKouryouPoint or in SaveData
-	doSizedAckResp(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
+	doAckBufSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
 }
 
 func handleMsgMhfGetKouryouPoint(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfGetKouryouPoint)
-	doSizedAckResp(s, pkt.AckHandle, []byte{0x00, 0x02, 0x14, 0x3E})
+	doAckBufSucceed(s, pkt.AckHandle, []byte{0x00, 0x02, 0x14, 0x3E})
 }
 
 func handleMsgMhfExchangeKouryouPoint(s *Session, p mhfpacket.MHFPacket) {}
@@ -3126,14 +3166,14 @@ func handleMsgMhfGetUdTacticsBonusQuest(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfGetUdTacticsBonusQuest)
 	// Temporary canned response
 	data, _ := hex.DecodeString("14E2F55DCBFE505DCC1A7003E8E2C55DCC6ED05DCC8AF00258E2CE5DCCDF505DCCFB700279E3075DCD4FD05DCD6BF0041AE2F15DCDC0505DCDDC700258E2C45DCE30D05DCE4CF00258E2F55DCEA1505DCEBD7003E8E2C25DCF11D05DCF2DF00258E2CE5DCF82505DCF9E700279E3075DCFF2D05DD00EF0041AE2CE5DD063505DD07F700279E2F35DD0D3D05DD0EFF0028AE2C35DD144505DD160700258E2F05DD1B4D05DD1D0F00258E2CE5DD225505DD241700279E2F55DD295D05DD2B1F003E8E2F25DD306505DD3227002EEE2CA5DD376D05DD392F00258E3075DD3E7505DD40370041AE2F55DD457D05DD473F003E82027313220686F757273273A3A696E74657276616C29202B2027313220686F757273273A3A696E74657276616C2047524F5550204259206D6170204F52444552204259206D61703B2000C7312B000032")
-	doSizedAckResp(s, pkt.AckHandle, data)
+	doAckBufSucceed(s, pkt.AckHandle, data)
 }
 
 func handleMsgMhfGetUdTacticsFirstQuestBonus(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfGetUdTacticsFirstQuestBonus)
 	// Temporary canned response
 	data, _ := hex.DecodeString("0500000005DC01000007D002000009C40300000BB80400001194")
-	doSizedAckResp(s, pkt.AckHandle, data)
+	doAckBufSucceed(s, pkt.AckHandle, data)
 
 }
 
@@ -3143,7 +3183,7 @@ func handleMsgSysReserve188(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgSysReserve188)
 
 	// Left as raw bytes because I couldn't easily find the request or resp parser function in the binary.
-	doSizedAckResp(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
+	doAckBufSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
 }
 
 func handleMsgMhfLoadPlateMyset(s *Session, p mhfpacket.MHFPacket) {
@@ -3155,10 +3195,10 @@ func handleMsgMhfLoadPlateMyset(s *Session, p mhfpacket.MHFPacket) {
 	}
 
 	if len(data) > 0 {
-		doSizedAckResp(s, pkt.AckHandle, data)
+		doAckBufSucceed(s, pkt.AckHandle, data)
 	} else {
 		blankData := make([]byte, 0x780)
-		doSizedAckResp(s, pkt.AckHandle, blankData)
+		doAckBufSucceed(s, pkt.AckHandle, blankData)
 	}
 }
 
@@ -3169,14 +3209,14 @@ func handleMsgMhfSavePlateMyset(s *Session, p mhfpacket.MHFPacket) {
 	if err != nil {
 		s.logger.Fatal("Failed to update platemyset savedata in db", zap.Error(err))
 	}
-	s.QueueAck(pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
+	doAckSimpleSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
 }
 
 func handleMsgSysReserve18B(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgSysReserve18B)
 
 	// Left as raw bytes because I couldn't easily find the request or resp parser function in the binary.
-	doSizedAckResp(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x3C})
+	doAckBufSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x3C})
 
 }
 
@@ -3198,12 +3238,12 @@ func handleMsgMhfGetTrendWeapon(s *Session, p mhfpacket.MHFPacket) {
 	// ED 05 0F 4C 05 0F F2 06 3A FE 06 41 E8 06 41 FA 07 3B 02 07 3F ED 07 40
 	// 24 08 3D 37 08 3F 66 08 41 EC 09 3D 38 09 3F 8A 09 41 EE 0A 0E 78 0A 0F
 	// AA 0A 0F F9 0B 3E 2E 0B 41 EF 0B 42 FB 0C 41 F0 0C 43 3F 0C 43 EE 0D 41 F1 0D 42 10 0D 42 3C 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
-	doSizedAckResp(s, pkt.AckHandle, make([]byte, 0xA9))
+	doAckBufSucceed(s, pkt.AckHandle, make([]byte, 0xA9))
 }
 
 func handleMsgMhfUpdateUseTrendWeaponLog(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfUpdateUseTrendWeaponLog)
-	s.QueueAck(pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
+	doAckSimpleSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
 }
 
 func handleMsgSysReserve192(s *Session, p mhfpacket.MHFPacket) {}
@@ -3219,7 +3259,7 @@ func handleMsgMhfSaveRengokuData(s *Session, p mhfpacket.MHFPacket) {
 		s.logger.Fatal("Failed to update rengokudata savedata in db", zap.Error(err))
 	}
 
-	s.QueueAck(pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
+	doAckSimpleSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
 }
 
 func handleMsgMhfLoadRengokuData(s *Session, p mhfpacket.MHFPacket) {
@@ -3230,7 +3270,7 @@ func handleMsgMhfLoadRengokuData(s *Session, p mhfpacket.MHFPacket) {
 		s.logger.Fatal("Failed to get rengokudata savedata from db", zap.Error(err))
 	}
 	if len(data) > 0 {
-		doSizedAckResp(s, pkt.AckHandle, data)
+		doAckBufSucceed(s, pkt.AckHandle, data)
 	} else {
 
 		resp := byteframe.NewByteFrame()
@@ -3268,7 +3308,7 @@ func handleMsgMhfLoadRengokuData(s *Session, p mhfpacket.MHFPacket) {
 		resp.WriteUint32(0)
 		resp.WriteUint32(0)
 
-		doSizedAckResp(s, pkt.AckHandle, resp.Data())
+		doAckBufSucceed(s, pkt.AckHandle, resp.Data())
 	}
 }
 
@@ -3279,12 +3319,12 @@ func handleMsgMhfGetRengokuBinary(s *Session, p mhfpacket.MHFPacket) {
 	if err != nil {
 		panic(err)
 	}
-	doSizedAckResp(s, pkt.AckHandle, data)
+	doAckBufSucceed(s, pkt.AckHandle, data)
 }
 
 func handleMsgMhfEnumerateRengokuRanking(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfEnumerateRengokuRanking)
-	doSizedAckResp(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
+	doAckBufSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
 }
 
 func handleMsgMhfGetRengokuRankingRank(s *Session, p mhfpacket.MHFPacket) {
@@ -3293,20 +3333,20 @@ func handleMsgMhfGetRengokuRankingRank(s *Session, p mhfpacket.MHFPacket) {
 	resp := byteframe.NewByteFrame()
 	resp.WriteBytes([]byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
 
-	doSizedAckResp(s, pkt.AckHandle, resp.Data())
+	doAckBufSucceed(s, pkt.AckHandle, resp.Data())
 }
 
 func handleMsgMhfAcquireExchangeShop(s *Session, p mhfpacket.MHFPacket) {
 	// writing out to an editable shop enumeration
 	pkt := p.(*mhfpacket.MsgMhfAcquireExchangeShop)
-	s.QueueAck(pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
+	doAckSimpleSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
 }
 
 func handleMsgSysReserve19B(s *Session, p mhfpacket.MHFPacket) {}
 
 func handleMsgMhfSaveMezfesData(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfSaveMezfesData)
-	s.QueueAck(pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
+	doAckSimpleSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
 }
 
 func handleMsgMhfLoadMezfesData(s *Session, p mhfpacket.MHFPacket) {
@@ -3321,7 +3361,7 @@ func handleMsgMhfLoadMezfesData(s *Session, p mhfpacket.MHFPacket) {
 
 	resp.WriteUint32(0) // Unk
 
-	doSizedAckResp(s, pkt.AckHandle, resp.Data())
+	doAckBufSucceed(s, pkt.AckHandle, resp.Data())
 }
 
 func handleMsgSysReserve19E(s *Session, p mhfpacket.MHFPacket) {}
@@ -3339,8 +3379,7 @@ func handleMsgSysReserve202(s *Session, p mhfpacket.MHFPacket) {
 // "Is_update_guild_msg_board"
 func handleMsgSysReserve203(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgSysReserve203)
-	resp := make([]byte, 8) // Unk resp.
-	s.QueueAck(pkt.AckHandle, resp)
+	doAckSimpleSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
 }
 
 func handleMsgSysReserve204(s *Session, p mhfpacket.MHFPacket) {}
