@@ -6,14 +6,11 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
-	"io"
 	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
-
-	"github.com/Andoryuuta/Erupe/network/binpacket"
 
 	"github.com/Andoryuuta/Erupe/network/mhfpacket"
 	"github.com/Andoryuuta/Erupe/server/channelserver/compression/deltacomp"
@@ -215,111 +212,6 @@ func handleMsgSysPing(s *Session, p mhfpacket.MHFPacket) {
 	doAckSimpleSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
 }
 
-const (
-	BINARY_MESSAGE_TYPE_CHAT  = 1
-	BINARY_MESSAGE_TYPE_EMOTE = 6
-)
-
-const (
-	CHAT_TYPE_WORLD    = 0x0a
-	CHAT_TYPE_STAGE    = 0x03
-	CHAT_TYPE_TARGETED = 0x01
-)
-
-func handleMsgSysCastBinary(s *Session, p mhfpacket.MHFPacket) {
-	pkt := p.(*mhfpacket.MsgSysCastBinary)
-
-	resp := &mhfpacket.MsgSysCastedBinary{
-		CharID:         s.charID,
-		Type0:          pkt.Type0,
-		Type1:          pkt.Type1,
-		RawDataPayload: pkt.RawDataPayload,
-	}
-
-	if pkt.Type1 == BINARY_MESSAGE_TYPE_CHAT {
-		bf := byteframe.NewByteFrame()
-		bf.WriteBytes(pkt.RawDataPayload)
-		bf.Seek(0, io.SeekStart)
-
-		fmt.Println("Got chat message!")
-
-		switch pkt.Type0 {
-		case CHAT_TYPE_WORLD:
-			s.server.BroadcastMHF(resp, s)
-		case CHAT_TYPE_STAGE:
-			s.stage.BroadcastMHF(resp, s)
-		case CHAT_TYPE_TARGETED:
-			chatMessage := &binpacket.MsgBinTargetedChatMessage{}
-			err := chatMessage.Parse(bf)
-
-			if err != nil {
-				s.logger.Warn("failed to parse chat message")
-				break
-			}
-
-			chatBf := byteframe.NewByteFrame()
-
-			chatBf.WriteUint16(chatMessage.TargetType)
-			chatBf.WriteBytes(chatMessage.RawDataPayload)
-
-			resp = &mhfpacket.MsgSysCastedBinary{
-				CharID:         s.charID,
-				Type0:          pkt.Type0,
-				Type1:          pkt.Type1,
-				RawDataPayload: chatBf.Data(),
-			}
-
-			for _, targetID := range chatMessage.TargetCharIDs {
-				char := s.server.FindSessionByCharID(targetID)
-
-				if char != nil {
-					char.QueueSendMHF(resp)
-				}
-			}
-		default:
-			s.stage.BroadcastMHF(resp, s)
-		}
-
-		/*
-			// Made the inside of the casted binary
-			payload := byteframe.NewByteFrame()
-			payload.WriteUint16(uint16(i)) // Chat type
-
-			//Chat type 0 = World
-			//Chat type 1 = Local
-			//Chat type 2 = Guild
-			//Chat type 3 = Alliance
-			//Chat type 4 = Party
-			//Chat type 5 = Whisper
-			//Thanks to @Alice on discord for identifying these.
-
-			payload.WriteUint8(0) // Unknown
-			msg := fmt.Sprintf("Chat type %d", i)
-			playername := fmt.Sprintf("Ando")
-			payload.WriteUint16(uint16(len(playername) + 1))
-			payload.WriteUint16(uint16(len(msg) + 1))
-			payload.WriteUint8(0) // Is this correct, or do I have the endianess of the prev 2 fields wrong?
-			payload.WriteNullTerminatedBytes([]byte(msg))
-			payload.WriteNullTerminatedBytes([]byte(playername))
-			payloadBytes := payload.Data()
-
-			//Wrap it in a CASTED_BINARY packet to broadcast
-			bfw := byteframe.NewByteFrame()
-			bfw.WriteUint16(uint16(network.MSG_SYS_CASTED_BINARY))
-			bfw.WriteUint32(0x23325A29) // Character ID
-			bfw.WriteUint8(1)           // type
-			bfw.WriteUint8(1)           // type2
-			bfw.WriteUint16(uint16(len(payloadBytes)))
-			bfw.WriteBytes(payloadBytes)
-		*/
-	} else {
-		// Simply forward the packet to all the other clients.
-		// (The client never uses Type0 upon receiving)
-		// TODO(Andoryuuta): Does this broadcast need to be limited? (world, stage, guild, etc).
-		s.server.BroadcastMHF(resp, s)
-	}
-}
-
 func handleMsgSysHideClient(s *Session, p mhfpacket.MHFPacket) {
 	//pkt := p.(*mhfpacket.MsgSysHideClient)
 }
@@ -333,8 +225,6 @@ func handleMsgSysTime(s *Session, p mhfpacket.MHFPacket) {
 	}
 	s.QueueSendMHF(resp)
 }
-
-func handleMsgSysCastedBinary(s *Session, p mhfpacket.MHFPacket) {}
 
 func handleMsgSysGetFile(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgSysGetFile)
