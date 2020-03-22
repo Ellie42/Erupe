@@ -123,7 +123,9 @@ func (s *Server) Shutdown() {
 	s.listener.Close()
 	close(s.acceptConns)
 
-	s.discordSession.Close()
+	if s.erupeConfig.Discord.Enabled {
+		s.discordSession.Close()
+	}
 }
 
 func (s *Server) acceptClients() {
