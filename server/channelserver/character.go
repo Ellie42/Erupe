@@ -20,7 +20,7 @@ type CharacterSaveData struct {
 }
 
 func GetCharacterSaveData(s *Session, charID uint32) (*CharacterSaveData, error) {
-	result, err := s.server.db.Queryx(
+	result, err := s.server.db.Query(
 		"SELECT id, savedata FROM characters WHERE id = $1",
 		charID,
 	)
@@ -33,6 +33,8 @@ func GetCharacterSaveData(s *Session, charID uint32) (*CharacterSaveData, error)
 		)
 		return nil, err
 	}
+
+	defer result.Close()
 
 	saveData := &CharacterSaveData{}
 	var compressedBaseSave []byte
