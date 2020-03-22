@@ -1477,7 +1477,12 @@ func handleMsgMhfUpdateCafepoint(s *Session, p mhfpacket.MHFPacket) {
 	doAckBufSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x04, 0x8b})
 }
 
-func handleMsgMhfCheckDailyCafepoint(s *Session, p mhfpacket.MHFPacket) {}
+func handleMsgMhfCheckDailyCafepoint(s *Session, p mhfpacket.MHFPacket) {
+	pkt := p.(*mhfpacket.MsgMhfCheckDailyCafepoint)
+
+	// I am not sure exactly what this does, but all responses I have seen include this exact sequence of bytes
+	doAckBufSucceed(s, pkt.AckHandle, []byte{0x01, 0x00, 0x00, 0x00, 0x05, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x01})
+}
 
 func handleMsgMhfGetCogInfo(s *Session, p mhfpacket.MHFPacket) {}
 
@@ -2573,10 +2578,6 @@ func handleMsgMhfGetDailyMissionPersonal(s *Session, p mhfpacket.MHFPacket) {}
 func handleMsgMhfSetDailyMissionPersonal(s *Session, p mhfpacket.MHFPacket) {}
 
 func handleMsgMhfGetGachaPlayHistory(s *Session, p mhfpacket.MHFPacket) {}
-
-func handleMsgMhfGetRejectGuildScout(s *Session, p mhfpacket.MHFPacket) {}
-
-func handleMsgMhfSetRejectGuildScout(s *Session, p mhfpacket.MHFPacket) {}
 
 func handleMsgMhfGetCaAchievementHist(s *Session, p mhfpacket.MHFPacket) {}
 

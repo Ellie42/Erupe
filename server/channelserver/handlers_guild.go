@@ -547,3 +547,50 @@ func handleMsgMhfGetUdGuildMapInfo(s *Session, p mhfpacket.MHFPacket) {
 }
 
 func handleMsgMhfGenerateUdGuildMap(s *Session, p mhfpacket.MHFPacket) {}
+
+func handleMsgMhfGetRejectGuildScout(s *Session, p mhfpacket.MHFPacket) {
+	pkt := p.(*mhfpacket.MsgMhfGetRejectGuildScout)
+
+	row := s.server.db.QueryRow("SELECT restrict_guild_scout FROM characters WHERE id=$1", s.charID)
+
+	var currentStatus bool
+
+	err := row.Scan(&currentStatus)
+
+	if err != nil {
+		s.logger.Error(
+			"failed to retrieve character guild scout status",
+			zap.Error(err),
+			zap.Uint32("charID", s.charID),
+		)
+		doAckBufFail(s, pkt.AckHandle, make([]byte, 4))
+		return
+	}
+
+	response := uint8(0x00)
+
+	if currentStatus {
+		response = 0x01
+	}
+
+	doAckBufSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, response})
+}
+
+func handleMsgMhfSetRejectGuildScout(s *Session, p mhfpacket.MHFPacket) {
+	pkt := p.(*mhfpacket.MsgMhfSetRejectGuildScout)
+
+	_, err := s.server.db.Exec("UPDATE characters SET restrict_guild_scout=$1 WHERE id=$2", pkt.Reject, s.charID)
+
+	if err != nil {
+		s.logger.Error(
+			"failed to update character guild scout status",
+			zap.Error(err),
+			zap.Uint32("charID", s.charID),
+		)
+		doAckBufFail(s, pkt.AckHandle, make([]byte, 4))
+
+		return
+	}
+
+	doAckBufSucceed(s, pkt.AckHandle, make([]byte, 4))
+}
