@@ -7,7 +7,9 @@ import (
 	"go.uber.org/zap"
 )
 
-const CharacterSaveRPPointer = 0x22D16
+const (
+	CharacterSaveRPPointer = 0x22D16
+)
 
 type CharacterSaveData struct {
 	CharID uint32
@@ -55,6 +57,10 @@ func GetCharacterSaveData(s *Session, charID uint32) (*CharacterSaveData, error)
 		return nil, err
 	}
 
+	if compressedBaseSave == nil {
+		return saveData, nil
+	}
+
 	decompressedBaseSave, err := nullcomp.Decompress(compressedBaseSave)
 
 	if err != nil {
@@ -71,10 +77,9 @@ func (save *CharacterSaveData) Save(s *Session, transaction *sql.Tx) error {
 	// We need to update the save data byte array before we save it back to the DB
 	save.updateSaveDataWithStruct()
 
-	compressedData, err := nullcomp.Compress(save.baseSaveData)
+	compressedData, err := save.CompressedBaseData(s)
 
 	if err != nil {
-		s.logger.Error("failed to compress saveData", zap.Error(err), zap.Uint32("charID", save.CharID))
 		return err
 	}
 
@@ -96,6 +101,17 @@ func (save *CharacterSaveData) Save(s *Session, transaction *sql.Tx) error {
 	}
 
 	return nil
+}
+
+func (save *CharacterSaveData) CompressedBaseData(s *Session) ([]byte, error) {
+	compressedData, err := nullcomp.Compress(save.baseSaveData)
+
+	if err != nil {
+		s.logger.Error("failed to compress saveData", zap.Error(err), zap.Uint32("charID", save.CharID))
+		return nil, err
+	}
+
+	return compressedData, nil
 }
 
 func (save *CharacterSaveData) BaseSaveData() []byte {

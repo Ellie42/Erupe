@@ -1013,8 +1013,6 @@ func handleMsgMhfSavedata(s *Session, p mhfpacket.MHFPacket) {
 		return
 	}
 
-	characterBaseSaveData := characterSaveData.BaseSaveData()
-
 	// Var to hold the decompressed savedata for updating the launcher response fields.
 	var decompressedData []byte
 	fmt.Printf("\n%d allocmemsize", pkt.AllocMemSize)
@@ -1027,7 +1025,7 @@ func handleMsgMhfSavedata(s *Session, p mhfpacket.MHFPacket) {
 		}
 
 		// Perform diff.
-		characterSaveData.SetBaseSaveData(deltacomp.ApplyDataDiff(diff, characterBaseSaveData))
+		characterSaveData.SetBaseSaveData(deltacomp.ApplyDataDiff(diff, characterSaveData.BaseSaveData()))
 
 		s.logger.Info("Diffing...")
 	} else {
@@ -1043,6 +1041,8 @@ func handleMsgMhfSavedata(s *Session, p mhfpacket.MHFPacket) {
 		s.logger.Info("Updating save with blob")
 	}
 
+	characterBaseSaveData := characterSaveData.BaseSaveData()
+
 	// Make a copy for updating the launcher fields.
 	decompressedData = make([]byte, len(characterBaseSaveData))
 	copy(decompressedData, characterBaseSaveData)
@@ -1055,11 +1055,7 @@ func handleMsgMhfSavedata(s *Session, p mhfpacket.MHFPacket) {
 
 	s.logger.Info("Wrote recompressed savedata back to DB.")
 
-	// TODO switch this back to compressed save
-	err = ioutil.WriteFile(fmt.Sprintf("savedata\\%d.bin", time.Now().Unix()), decompressedData, 0644)
-	if err != nil {
-		s.logger.Fatal("Error dumping savedata", zap.Error(err))
-	}
+	dumpSaveData(s, pkt.RawDataPayload, "")
 
 	// Temporary server launcher response stuff
 	// 0x1F715	Weapon Class
@@ -1085,6 +1081,22 @@ func handleMsgMhfSavedata(s *Session, p mhfpacket.MHFPacket) {
 	}
 
 	doAckSimpleSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
+}
+
+func dumpSaveData(s *Session, data []byte, suffix string) {
+	if !s.server.erupeConfig.DevModeOptions.SaveDumps.Enabled {
+		return
+	}
+
+	err := ioutil.WriteFile(fmt.Sprintf(
+		"%s\\%d%s.bin",
+		s.server.erupeConfig.DevModeOptions.SaveDumps.OutputDir, time.Now().Unix(), suffix), data,
+		0644,
+	)
+
+	if err != nil {
+		s.logger.Fatal("Error dumping savedata", zap.Error(err))
+	}
 }
 
 func handleMsgMhfLoaddata(s *Session, p mhfpacket.MHFPacket) {
@@ -1795,10 +1807,7 @@ func handleMsgMhfLoadPlateData(s *Session, p mhfpacket.MHFPacket) {
 func handleMsgMhfSavePlateData(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfSavePlateData)
 
-	err := ioutil.WriteFile(fmt.Sprintf("savedata\\%d_platedata.bin", time.Now().Unix()), pkt.RawDataPayload, 0644)
-	if err != nil {
-		s.logger.Fatal("Error dumping platedata", zap.Error(err))
-	}
+	dumpSaveData(s, pkt.RawDataPayload, "_platedata")
 
 	if pkt.IsDataDiff {
 		var data []byte
@@ -1858,10 +1867,7 @@ func handleMsgMhfLoadPlateBox(s *Session, p mhfpacket.MHFPacket) {
 func handleMsgMhfSavePlateBox(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfSavePlateBox)
 
-	err := ioutil.WriteFile(fmt.Sprintf("savedata\\%d_platebox.bin", time.Now().Unix()), pkt.RawDataPayload, 0644)
-	if err != nil {
-		s.logger.Fatal("Error dumping hunter platebox savedata", zap.Error(err))
-	}
+	dumpSaveData(s, pkt.RawDataPayload, "_platebox")
 
 	if pkt.IsDataDiff {
 		var data []byte
@@ -2005,12 +2011,10 @@ func handleMsgMhfLoadPartner(s *Session, p mhfpacket.MHFPacket) {
 
 func handleMsgMhfSavePartner(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfSavePartner)
-	err := ioutil.WriteFile(fmt.Sprintf("savedata\\%d_partner.bin", time.Now().Unix()), pkt.RawDataPayload, 0644)
-	if err != nil {
-		s.logger.Fatal("Error dumping partner savedata", zap.Error(err))
-	}
 
-	_, err = s.server.db.Exec("UPDATE characters SET partner=$1 WHERE id=$2", pkt.RawDataPayload, s.charID)
+	dumpSaveData(s, pkt.RawDataPayload, "_partner")
+
+	_, err := s.server.db.Exec("UPDATE characters SET partner=$1 WHERE id=$2", pkt.RawDataPayload, s.charID)
 	if err != nil {
 		s.logger.Fatal("Failed to update partner savedata in db", zap.Error(err))
 	}
@@ -2050,12 +2054,9 @@ func handleMsgMhfLoadOtomoAirou(s *Session, p mhfpacket.MHFPacket) {
 
 func handleMsgMhfSaveOtomoAirou(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfSaveOtomoAirou)
-	err := ioutil.WriteFile(fmt.Sprintf("savedata\\%d_otomoairou.bin", time.Now().Unix()), pkt.RawDataPayload, 0644)
-	if err != nil {
-		s.logger.Fatal("Error dumping partnyaa savedata", zap.Error(err))
-	}
+	dumpSaveData(s, pkt.RawDataPayload, "_otomoairou")
 
-	_, err = s.server.db.Exec("UPDATE characters SET otomoairou=$1 WHERE id=$2", pkt.RawDataPayload, s.charID)
+	_, err := s.server.db.Exec("UPDATE characters SET otomoairou=$1 WHERE id=$2", pkt.RawDataPayload, s.charID)
 	if err != nil {
 		s.logger.Fatal("Failed to update partnyaa savedata in db", zap.Error(err))
 	}
@@ -2193,10 +2194,8 @@ func handleMsgMhfLoadHunterNavi(s *Session, p mhfpacket.MHFPacket) {
 
 func handleMsgMhfSaveHunterNavi(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfSaveHunterNavi)
-	err := ioutil.WriteFile(fmt.Sprintf("savedata\\%d_hunternavi.bin", time.Now().Unix()), pkt.RawDataPayload, 0644)
-	if err != nil {
-		s.logger.Fatal("Error dumping hunter navigation savedata", zap.Error(err))
-	}
+
+	dumpSaveData(s, pkt.RawDataPayload, "_hunternavi")
 
 	if pkt.IsDataDiff {
 		var data []byte
