@@ -1,6 +1,0 @@
-BEGIN;
-
-ALTER TABLE characters
-    ADD COLUMN rp int NOT NULL DEFAULT 0;
-
-END;

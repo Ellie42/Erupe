@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"crypto/rand"
 	"encoding/base64"
-	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"github.com/Andoryuuta/Erupe/network/binpacket"
@@ -1093,27 +1092,20 @@ func handleMsgMhfSavedata(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfSavedata)
 
 	var err error
+	characterSaveData, err := GetCharacterSaveData(s, s.charID)
+
+	if err != nil {
+		s.logger.Error("failed to retrieve character save data from db", zap.Error(err), zap.Uint32("charID", s.charID))
+		return
+	}
+
+	characterBaseSaveData := characterSaveData.BaseSaveData()
 
 	// Var to hold the decompressed savedata for updating the launcher response fields.
 	var decompressedData []byte
 	fmt.Printf("\n%d allocmemsize", pkt.AllocMemSize)
 	if pkt.SaveType == 1 {
 		// Diff-based update.
-
-		// Load existing save
-		var data []byte
-		err := s.server.db.QueryRow("SELECT savedata FROM characters WHERE id = $1", s.charID).Scan(&data)
-		if err != nil {
-			s.logger.Fatal("Failed to get savedata from db", zap.Error(err))
-		}
-
-		// Decompress
-		s.logger.Info("\nDecompressing...")
-		data, err = nullcomp.Decompress(data)
-		if err != nil {
-			s.logger.Fatal("Failed to decompress savedata from db", zap.Error(err))
-		}
-
 		// diffs themselves are also potentially compressed
 		diff, err := nullcomp.Decompress(pkt.RawDataPayload)
 		if err != nil {
@@ -1121,37 +1113,27 @@ func handleMsgMhfSavedata(s *Session, p mhfpacket.MHFPacket) {
 		}
 
 		// Perform diff.
-		data = deltacomp.ApplyDataDiff(diff, data)
+		characterSaveData.SetBaseSaveData(deltacomp.ApplyDataDiff(diff, characterBaseSaveData))
 
-		// Make a copy for updating the launcher fields.
-		decompressedData = make([]byte, len(data))
-		copy(decompressedData, data)
-
-		// Compress it to write back to db
 		s.logger.Info("Diffing...")
 	} else {
 		// Regular blob update.
-		// diffs themselves are also potentially compressed
-		decompressedData, err = nullcomp.Decompress(pkt.RawDataPayload)
+		saveData, err := nullcomp.Decompress(pkt.RawDataPayload)
+
+		characterSaveData.SetBaseSaveData(saveData)
 
 		if err != nil {
 			s.logger.Fatal("Failed to decompress savedata from packet", zap.Error(err))
 		}
+
+		s.logger.Info("Updating save with blob")
 	}
 
-	charRp := binary.LittleEndian.Uint16(decompressedData[CharacterSaveRPPointer : CharacterSaveRPPointer+2])
+	// Make a copy for updating the launcher fields.
+	decompressedData = make([]byte, len(characterBaseSaveData))
+	copy(decompressedData, characterBaseSaveData)
 
-	saveOutput, err := nullcomp.Compress(decompressedData)
-
-	if err != nil {
-		s.logger.Fatal("Failed to diff and compress savedata", zap.Error(err))
-	}
-
-	_, err = s.server.db.Exec(`
-				UPDATE characters 
-					SET savedata=$1, rp=$2 
-				WHERE id=$3
-	`, saveOutput, charRp, s.charID)
+	err = characterSaveData.Save(s, nil)
 
 	if err != nil {
 		s.logger.Fatal("Failed to update savedata in db", zap.Error(err))
@@ -1159,10 +1141,7 @@ func handleMsgMhfSavedata(s *Session, p mhfpacket.MHFPacket) {
 
 	s.logger.Info("Wrote recompressed savedata back to DB.")
 
-	if err != nil {
-		s.logger.Fatal("Failed to update savedata in db", zap.Error(err))
-	}
-
+	// TODO switch this back to compressed save
 	err = ioutil.WriteFile(fmt.Sprintf("savedata\\%d.bin", time.Now().Unix()), decompressedData, 0644)
 	if err != nil {
 		s.logger.Fatal("Error dumping savedata", zap.Error(err))

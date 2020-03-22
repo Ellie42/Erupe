@@ -10,14 +10,16 @@ import (
 const CharacterSaveRPPointer = 0x22D16
 
 type CharacterSaveData struct {
-	ID           uint32
-	RP           uint16
-	BaseSaveData []byte
+	CharID uint32
+	RP     uint16
+
+	// Use provided setter/getter
+	baseSaveData []byte
 }
 
 func GetCharacterSaveData(s *Session, charID uint32) (*CharacterSaveData, error) {
 	result, err := s.server.db.Queryx(
-		"SELECT id, rp, savedata FROM characters WHERE id = $1",
+		"SELECT id, savedata FROM characters WHERE id = $1",
 		charID,
 	)
 
@@ -41,7 +43,7 @@ func GetCharacterSaveData(s *Session, charID uint32) (*CharacterSaveData, error)
 		return nil, err
 	}
 
-	err = result.Scan(&saveData.ID, &saveData.RP, &compressedBaseSave)
+	err = result.Scan(&saveData.CharID, &compressedBaseSave)
 
 	if err != nil {
 		s.logger.Error(
@@ -60,39 +62,61 @@ func GetCharacterSaveData(s *Session, charID uint32) (*CharacterSaveData, error)
 		return nil, err
 	}
 
-	saveData.BaseSaveData = decompressedBaseSave
+	saveData.SetBaseSaveData(decompressedBaseSave)
 
 	return saveData, nil
 }
 
 func (save *CharacterSaveData) Save(s *Session, transaction *sql.Tx) error {
-	rpBytes := make([]byte, 2)
-	binary.LittleEndian.PutUint16(rpBytes, save.RP)
-	copy(save.BaseSaveData[CharacterSaveRPPointer:CharacterSaveRPPointer+2], rpBytes)
+	// We need to update the save data byte array before we save it back to the DB
+	save.updateSaveDataWithStruct()
 
-	compressedData, err := nullcomp.Compress(save.BaseSaveData)
+	compressedData, err := nullcomp.Compress(save.baseSaveData)
 
 	if err != nil {
-		s.logger.Error("failed to compress saveData", zap.Error(err), zap.Uint32("charID", save.ID))
+		s.logger.Error("failed to compress saveData", zap.Error(err), zap.Uint32("charID", save.CharID))
 		return err
 	}
 
 	updateSQL := `
 		UPDATE characters 
-			SET savedata=$1, rp=$2
-		WHERE id=$3
+			SET savedata=$1
+		WHERE id=$2
 	`
 
 	if transaction != nil {
-		_, err = transaction.Exec(updateSQL, compressedData, save.RP, save.ID)
+		_, err = transaction.Exec(updateSQL, compressedData, save.CharID)
 	} else {
-		_, err = s.server.db.Exec(updateSQL, compressedData, save.RP, save.ID)
+		_, err = s.server.db.Exec(updateSQL, compressedData, save.CharID)
 	}
 
 	if err != nil {
-		s.logger.Error("failed to save character data", zap.Error(err), zap.Uint32("charID", save.ID))
+		s.logger.Error("failed to save character data", zap.Error(err), zap.Uint32("charID", save.CharID))
 		return err
 	}
 
 	return nil
+}
+
+func (save *CharacterSaveData) BaseSaveData() []byte {
+	return save.baseSaveData
+}
+
+func (save *CharacterSaveData) SetBaseSaveData(data []byte) {
+	save.baseSaveData = data
+	// After setting the new save byte array, we can extract the values to update our struct
+	// This will be useful when we save it back, we use the struct values to overwrite the saveData
+	save.updateStructWithSaveData()
+}
+
+// This will update the save struct with the values stored in the raw savedata arrays
+func (save *CharacterSaveData) updateSaveDataWithStruct() {
+	rpBytes := make([]byte, 2)
+	binary.LittleEndian.PutUint16(rpBytes, save.RP)
+	copy(save.baseSaveData[CharacterSaveRPPointer:CharacterSaveRPPointer+2], rpBytes)
+}
+
+// This will update the character save struct with the values stored in the raw savedata arrays
+func (save *CharacterSaveData) updateStructWithSaveData() {
+	save.RP = binary.LittleEndian.Uint16(save.baseSaveData[CharacterSaveRPPointer : CharacterSaveRPPointer+2])
 }
