@@ -92,7 +92,7 @@ func handleMsgSysCastBinary(s *Session, p mhfpacket.MHFPacket) {
 		s.stage.BroadcastMHF(resp, s)
 	}
 
-	// Handle chat commands
+	// Handle chat
 	if pkt.Type1 == BinaryMessageTypeChat {
 		bf := byteframe.NewByteFrameFromBytes(realPayload)
 
@@ -104,6 +104,12 @@ func handleMsgSysCastBinary(s *Session, p mhfpacket.MHFPacket) {
 		chatMessage.Parse(bf)
 
 		fmt.Printf("Got chat message: %+v\n", chatMessage)
+
+		// Discord integration
+		if s.server.erupeConfig.Discord.Enabled {
+			message := fmt.Sprintf("%s: %s", chatMessage.SenderName, chatMessage.Message)
+			s.server.discordSession.ChannelMessageSend(s.server.erupeConfig.Discord.ChannelID, message)
+		}
 
 		if strings.HasPrefix(chatMessage.Message, "!tele ") {
 			var x, y int16

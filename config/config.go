@@ -14,6 +14,7 @@ type Config struct {
 	DevMode bool
 
 	DevModeOptions DevModeOptions
+	Discord        Discord
 	Database       Database
 	Launcher       Launcher
 	Sign           Sign
@@ -27,6 +28,13 @@ type DevModeOptions struct {
 	MaxLauncherHR       bool // Sets the HR returned in the launcher to HR9 so that you can join non-beginner worlds.
 	FixedStageID        bool // Causes all move_stage to use the ID sl1Ns200p0a0u0 to get you into all stages
 	LogOutboundMessages bool // Log all messages sent to the clients
+}
+
+// Discord holds the discord integration config.
+type Discord struct {
+	Enabled   bool
+	BotToken  string
+	ChannelID string
 }
 
 // Database holds the postgres database config.
