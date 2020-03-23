@@ -76,9 +76,6 @@ func GetCharacterSaveData(s *Session, charID uint32) (*CharacterSaveData, error)
 }
 
 func (save *CharacterSaveData) Save(s *Session, transaction *sql.Tx) error {
-	// We need to update the save data byte array before we save it back to the DB
-	save.updateSaveDataWithStruct()
-
 	compressedData, err := save.CompressedBaseData(s)
 
 	if err != nil {
@@ -125,13 +122,6 @@ func (save *CharacterSaveData) SetBaseSaveData(data []byte) {
 	// After setting the new save byte array, we can extract the values to update our struct
 	// This will be useful when we save it back, we use the struct values to overwrite the saveData
 	save.updateStructWithSaveData()
-}
-
-// This will update the save struct with the values stored in the raw savedata arrays
-func (save *CharacterSaveData) updateSaveDataWithStruct() {
-	rpBytes := make([]byte, 2)
-	binary.LittleEndian.PutUint16(rpBytes, save.RP)
-	copy(save.baseSaveData[CharacterSaveRPPointer:CharacterSaveRPPointer+2], rpBytes)
 }
 
 // This will update the character save struct with the values stored in the raw savedata arrays
