@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
+	"github.com/Andoryuuta/Erupe/network"
 	"sort"
 
 	"github.com/Andoryuuta/Erupe/network/mhfpacket"
@@ -49,6 +50,11 @@ func handleMsgMhfOperateGuild(s *Session, p mhfpacket.MHFPacket) {
 
 	bf := byteframe.NewByteFrame()
 
+	bf.WriteUint16(uint16(network.MSG_SYS_ACK))
+	bf.WriteUint32(pkt.AckHandle)
+	bf.WriteUint8(0x00)
+	bf.WriteUint8(0x00)
+
 	switch pkt.Action {
 	case mhfpacket.OPERATE_GUILD_ACTION_DISBAND:
 		if guild.Leader.CharID != s.charID {
@@ -60,6 +66,7 @@ func handleMsgMhfOperateGuild(s *Session, p mhfpacket.MHFPacket) {
 		response := 0x01
 
 		if err != nil {
+			// All successful acks return 0x01, assuming 0x00 is failure
 			response = 0x00
 		}
 
@@ -68,6 +75,7 @@ func handleMsgMhfOperateGuild(s *Session, p mhfpacket.MHFPacket) {
 		err = guild.Apply(s, s.charID)
 
 		if err != nil {
+			// All successful acks return 0x01, assuming 0x00 is failure
 			bf.WriteUint16(0x00)
 			bf.WriteUint32(0x00)
 		} else {
@@ -80,6 +88,7 @@ func handleMsgMhfOperateGuild(s *Session, p mhfpacket.MHFPacket) {
 		response := 0x01
 
 		if err != nil {
+			// All successful acks return 0x01, assuming 0x00 is failure
 			response = 0x00
 		}
 
@@ -94,12 +103,7 @@ func handleMsgMhfOperateGuild(s *Session, p mhfpacket.MHFPacket) {
 		panic(fmt.Sprintf("unhandled operate guild action '%d'", pkt.Action))
 	}
 
-	ackMessage := &mhfpacket.MsgSysAck{
-		AckHandle: pkt.AckHandle,
-		AckData:   bf.Data(),
-	}
-
-	s.QueueSendMHF(ackMessage)
+	s.QueueSend(bf.Data())
 }
 
 func handleOperateGuildActionDonate(s *Session, guild *Guild, pkt *mhfpacket.MsgMhfOperateGuild, bf *byteframe.ByteFrame) error {
@@ -160,7 +164,7 @@ func handleOperateGuildActionDonate(s *Session, guild *Guild, pkt *mhfpacket.Msg
 		return err
 	}
 
-	bf.WriteUint32(0x00)
+	bf.WriteUint16(0x00)
 	bf.WriteUint32(uint32(saveData.RP)) // Points remaining
 
 	return nil
