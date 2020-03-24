@@ -525,7 +525,18 @@ func handleMsgSysLockStage(s *Session, p mhfpacket.MHFPacket) {
 	doAckSimpleSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
 }
 
-func handleMsgSysUnlockStage(s *Session, p mhfpacket.MHFPacket) {}
+func handleMsgSysUnlockStage(s *Session, p mhfpacket.MHFPacket) {
+	s.reservationStage.RLock()
+	defer s.reservationStage.RUnlock()
+
+	destructMessage := &mhfpacket.MsgSysStageDestruct{}
+
+	for charID, _ := range s.reservationStage.reservedClientSlots {
+		session := s.server.FindSessionByCharID(charID)
+
+		session.QueueSendMHF(destructMessage)
+	}
+}
 
 func handleMsgSysReserveStage(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgSysReserveStage)

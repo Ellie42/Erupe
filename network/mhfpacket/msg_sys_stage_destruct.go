@@ -20,5 +20,6 @@ func (m *MsgSysStageDestruct) Parse(bf *byteframe.ByteFrame) error {
 
 // Build builds a binary packet from the current data.
 func (m *MsgSysStageDestruct) Build(bf *byteframe.ByteFrame) error {
-	panic("Not implemented")
+	// No data other than opcode
+	return nil
 }
