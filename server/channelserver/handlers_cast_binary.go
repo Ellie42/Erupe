@@ -89,7 +89,12 @@ func handleMsgSysCastBinary(s *Session, p mhfpacket.MHFPacket) {
 			}
 		}
 	default:
-		s.stage.BroadcastMHF(resp, s)
+		s.Lock()
+		haveStage := s.stage != nil
+		if haveStage {
+			s.stage.BroadcastMHF(resp, s)
+		}
+		s.Unlock()
 	}
 
 	// Handle chat
