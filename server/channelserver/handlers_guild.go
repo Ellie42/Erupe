@@ -4,7 +4,6 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
-	"github.com/Andoryuuta/Erupe/network"
 	"sort"
 
 	"github.com/Andoryuuta/Erupe/network/mhfpacket"
@@ -18,25 +17,21 @@ func handleMsgMhfCreateGuild(s *Session, p mhfpacket.MHFPacket) {
 	guildId, err := CreateGuild(s, stripNullTerminator(pkt.Name))
 
 	if err != nil {
-		bf := byteframe.NewByteFrameFromBytes([]byte{0x00, 0x00, 0x00, 0x00})
+		bf := byteframe.NewByteFrame()
 
 		// No reasoning behind these values other than they cause a 'failed to create'
 		// style message, it's better than nothing for now.
 		bf.WriteUint32(0x01010101)
 
-		ack := &mhfpacket.MsgSysAck{AckHandle: pkt.AckHandle, AckData: bf.Data()}
-
-		s.QueueSendMHF(ack)
+		doAckSimpleFail(s, pkt.AckHandle, bf.Data())
 		return
 	}
 
-	bf := byteframe.NewByteFrameFromBytes([]byte{0x00, 0x00, 0x00, 0x00})
+	bf := byteframe.NewByteFrame()
 
 	bf.WriteUint32(uint32(guildId))
 
-	ack := &mhfpacket.MsgSysAck{AckHandle: pkt.AckHandle, AckData: bf.Data()}
-
-	s.QueueSendMHF(ack)
+	doAckSimpleSucceed(s, pkt.AckHandle, bf.Data())
 }
 
 func handleMsgMhfOperateGuild(s *Session, p mhfpacket.MHFPacket) {
@@ -49,11 +44,6 @@ func handleMsgMhfOperateGuild(s *Session, p mhfpacket.MHFPacket) {
 	}
 
 	bf := byteframe.NewByteFrame()
-
-	bf.WriteUint16(uint16(network.MSG_SYS_ACK))
-	bf.WriteUint32(pkt.AckHandle)
-	bf.WriteUint8(0x00)
-	bf.WriteUint8(0x00)
 
 	switch pkt.Action {
 	case mhfpacket.OPERATE_GUILD_ACTION_DISBAND:
@@ -70,16 +60,14 @@ func handleMsgMhfOperateGuild(s *Session, p mhfpacket.MHFPacket) {
 			response = 0x00
 		}
 
-		bf.WriteBytes([]byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, byte(response)})
+		bf.WriteUint32(uint32(response))
 	case mhfpacket.OPERATE_GUILD_ACTION_APPLY:
 		err = guild.Apply(s, s.charID)
 
 		if err != nil {
 			// All successful acks return 0x01, assuming 0x00 is failure
-			bf.WriteUint16(0x00)
 			bf.WriteUint32(0x00)
 		} else {
-			bf.WriteUint16(0x01)
 			bf.WriteUint32(guild.Leader.CharID)
 		}
 	case mhfpacket.OPERATE_GUILD_ACTION_LEAVE:
@@ -92,7 +80,7 @@ func handleMsgMhfOperateGuild(s *Session, p mhfpacket.MHFPacket) {
 			response = 0x00
 		}
 
-		bf.WriteBytes([]byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, byte(response)})
+		bf.WriteUint32(uint32(response))
 	case mhfpacket.OPERATE_GUILD_ACTION_DONATE:
 		err := handleOperateGuildActionDonate(s, guild, pkt, bf)
 
@@ -103,7 +91,7 @@ func handleMsgMhfOperateGuild(s *Session, p mhfpacket.MHFPacket) {
 		panic(fmt.Sprintf("unhandled operate guild action '%d'", pkt.Action))
 	}
 
-	s.QueueSend(bf.Data())
+	doAckSimpleSucceed(s, pkt.AckHandle, bf.Data())
 }
 
 func handleOperateGuildActionDonate(s *Session, guild *Guild, pkt *mhfpacket.MsgMhfOperateGuild, bf *byteframe.ByteFrame) error {
@@ -164,7 +152,6 @@ func handleOperateGuildActionDonate(s *Session, guild *Guild, pkt *mhfpacket.Msg
 		return err
 	}
 
-	bf.WriteUint16(0x00)
 	bf.WriteUint32(uint32(saveData.RP)) // Points remaining
 
 	return nil
@@ -174,19 +161,11 @@ func handleMsgMhfOperateGuildMember(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfOperateGuildMember)
 
 	sendResponse := func(success bool) {
-		response := byte(0x01)
-
 		if success {
-			response = 0x00
+			doAckSimpleSucceed(s, pkt.AckHandle, nil)
+		} else {
+			doAckSimpleFail(s, pkt.AckHandle, nil)
 		}
-
-		ack := &mhfpacket.MsgSysAck{
-			AckHandle: pkt.AckHandle,
-			// Testing values
-			AckData: []byte{response, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
-		}
-
-		s.QueueSendMHF(ack)
 	}
 
 	guild, err := GetGuildInfoByCharacterId(s, pkt.CharID)
@@ -308,6 +287,28 @@ func handleMsgMhfInfoGuild(s *Session, p mhfpacket.MHFPacket) {
 		bf.WriteUint32(0x0) // Alliance ID
 
 		// TODO add alliance parts here
+		//
+		//if (AllianceID != 0) {
+		//  uint16 AllianceDataUnk;
+		//  uint16 AllianceDataUnk;
+		//  uint16 AllianceNameLength;
+		//	char AllianceName[AllianceNameLength];
+		//
+		//	byte NumAllianceMembers;
+		//
+		//	struct AllianceMember {
+		//		uint32 Unk;
+		//		uint32 Unk;
+		//		uint16 Unk;
+		//		uint16 Unk;
+		//		uint16 Unk;
+		//		uint16 GuildNameLength;
+		//		char GuildName[GuildNameLength];
+		//		uint16 GuildLeaderNameLength;
+		//		char GuildLeaderName[GuildLeaderNameLength];
+		//
+		//	} member[NumAllianceMembers] <optimize=false>;
+		//}
 
 		applicants, err := GetGuildMembers(s, guild.ID, true)
 
@@ -430,12 +431,7 @@ func handleMsgMhfArrangeGuildMember(s *Session, p mhfpacket.MHFPacket) {
 		return
 	}
 
-	ack := &mhfpacket.MsgSysAck{
-		AckHandle: pkt.AckHandle,
-		AckData:   make([]byte, 8),
-	}
-
-	s.QueueSendMHF(ack)
+	doAckSimpleSucceed(s, pkt.AckHandle, make([]byte, 4))
 }
 
 func handleMsgMhfEnumerateGuildMember(s *Session, p mhfpacket.MHFPacket) {
@@ -505,7 +501,7 @@ func handleMsgMhfGetGuildScoutList(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfGetGuildScoutList)
 
 	// No scouting allowed
-	doAckBufSucceed(s, pkt.AckHandle, make([]byte, 4))
+	doAckSimpleSucceed(s, pkt.AckHandle, nil)
 }
 
 func handleMsgMhfGetGuildManageRight(s *Session, p mhfpacket.MHFPacket) {
@@ -567,7 +563,7 @@ func handleMsgMhfGetRejectGuildScout(s *Session, p mhfpacket.MHFPacket) {
 			zap.Error(err),
 			zap.Uint32("charID", s.charID),
 		)
-		doAckBufFail(s, pkt.AckHandle, make([]byte, 4))
+		doAckSimpleFail(s, pkt.AckHandle, nil)
 		return
 	}
 
@@ -577,7 +573,7 @@ func handleMsgMhfGetRejectGuildScout(s *Session, p mhfpacket.MHFPacket) {
 		response = 0x01
 	}
 
-	doAckBufSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, response})
+	doAckSimpleSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, response})
 }
 
 func handleMsgMhfSetRejectGuildScout(s *Session, p mhfpacket.MHFPacket) {
@@ -591,10 +587,10 @@ func handleMsgMhfSetRejectGuildScout(s *Session, p mhfpacket.MHFPacket) {
 			zap.Error(err),
 			zap.Uint32("charID", s.charID),
 		)
-		doAckBufFail(s, pkt.AckHandle, make([]byte, 4))
+		doAckSimpleFail(s, pkt.AckHandle, nil)
 
 		return
 	}
 
-	doAckBufSucceed(s, pkt.AckHandle, make([]byte, 4))
+	doAckSimpleSucceed(s, pkt.AckHandle, nil)
 }
