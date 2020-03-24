@@ -11,8 +11,8 @@ const (
 	OPERATE_GUILD_ACTION_DISBAND = 0x01
 	OPERATE_GUILD_ACTION_APPLY   = 0x02
 	OPERATE_GUILD_ACTION_LEAVE   = 0x03
-	OPERATE_GUILD_LEAVE          = 0x08
-	OPERATE_GUILD_UPGRADE        = 0x0a
+	//OPERATE_GUILD_LEAVE          = 0x08
+	OPERATE_GUILD_ACTION_DONATE = 0x0a
 )
 
 // MsgMhfOperateGuild represents the MSG_MHF_OPERATE_GUILD
@@ -33,6 +33,7 @@ func (m *MsgMhfOperateGuild) Parse(bf *byteframe.ByteFrame) error {
 	m.AckHandle = bf.ReadUint32()
 	m.GuildID = bf.ReadUint32()
 	m.Action = OperateGuildAction(bf.ReadUint8())
+	m.UnkData = bf.DataFromCurrent()
 
 	return nil
 }

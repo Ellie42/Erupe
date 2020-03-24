@@ -28,6 +28,12 @@ type DevModeOptions struct {
 	MaxLauncherHR       bool // Sets the HR returned in the launcher to HR9 so that you can join non-beginner worlds.
 	FixedStageID        bool // Causes all move_stage to use the ID sl1Ns200p0a0u0 to get you into all stages
 	LogOutboundMessages bool // Log all messages sent to the clients
+	SaveDumps           SaveDumpOptions
+}
+
+type SaveDumpOptions struct {
+	Enabled   bool
+	OutputDir string
 }
 
 // Discord holds the discord integration config.
@@ -119,6 +125,11 @@ func getOutboundIP4() net.IP {
 func LoadConfig() (*Config, error) {
 	viper.SetConfigName("config")
 	viper.AddConfigPath(".")
+
+	viper.SetDefault("DevModeOptions.SaveDumps", SaveDumpOptions{
+		Enabled:   true,
+		OutputDir: "savedata",
+	})
 
 	err := viper.ReadInConfig()
 	if err != nil {

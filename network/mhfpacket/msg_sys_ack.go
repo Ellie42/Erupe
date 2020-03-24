@@ -47,12 +47,15 @@ func (m *MsgSysAck) Build(bf *byteframe.ByteFrame) error {
 	bf.WriteBool(m.IsBufferResponse)
 	bf.WriteUint8(m.ErrorCode)
 
-	if len(m.AckData) < 0xFFFF {
-		bf.WriteUint16(uint16(len(m.AckData)))
+	if m.IsBufferResponse {
+		if len(m.AckData) < 0xFFFF {
+			bf.WriteUint16(uint16(len(m.AckData)))
+		} else {
+			bf.WriteUint16(0xFFFF)
+			bf.WriteUint32(uint32(len(m.AckData)))
+		}
 	} else {
-		// Extended data size field
-		bf.WriteUint16(0xFFFF)
-		bf.WriteUint32(uint32(len(m.AckData)))
+		bf.WriteUint16(0x00)
 	}
 
 	if m.IsBufferResponse {
