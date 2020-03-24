@@ -536,6 +536,11 @@ func handleMsgSysUnlockStage(s *Session, p mhfpacket.MHFPacket) {
 
 		session.QueueSendMHF(destructMessage)
 	}
+
+	s.server.Lock()
+	defer s.server.Unlock()
+
+	delete(s.server.stages, s.reservationStage.id)
 }
 
 func handleMsgSysReserveStage(s *Session, p mhfpacket.MHFPacket) {
