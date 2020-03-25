@@ -914,9 +914,7 @@ func handleMsgSysRotateObject(s *Session, p mhfpacket.MHFPacket) {}
 
 func handleMsgSysDuplicateObject(s *Session, p mhfpacket.MHFPacket) {}
 
-func handleMsgSysSetObjectBinary(s *Session, p mhfpacket.MHFPacket) {
-
-}
+func handleMsgSysSetObjectBinary(s *Session, p mhfpacket.MHFPacket) {}
 
 func handleMsgSysGetObjectBinary(s *Session, p mhfpacket.MHFPacket) {}
 

@@ -1,10 +1,14 @@
 package channelserver
 
 import (
+	"bytes"
 	"database/sql"
 	"fmt"
 	"github.com/jmoiron/sqlx"
 	"go.uber.org/zap"
+	"golang.org/x/text/encoding/japanese"
+	"golang.org/x/text/transform"
+	"io/ioutil"
 	"time"
 )
 
@@ -347,9 +351,16 @@ func CreateGuild(s *Session, guildName string) (int32, error) {
 		return 0, err
 	}
 
+	r := bytes.NewBuffer([]byte(guildName))
+	decoded, err := ioutil.ReadAll(transform.NewReader(r, japanese.ShiftJIS.NewDecoder()))
+
+	if err != nil {
+		panic(err)
+	}
+
 	guildResult, err := transaction.Query(
 		"INSERT INTO guilds (name, leader_id) VALUES ($1, $2) RETURNING id",
-		guildName, s.charID,
+		string(decoded), s.charID,
 	)
 
 	if err != nil {
