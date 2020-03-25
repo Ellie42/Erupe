@@ -1041,6 +1041,8 @@ func handleMsgMhfSavedata(s *Session, p mhfpacket.MHFPacket) {
 		s.logger.Info("Updating save with blob")
 	}
 
+	characterSaveData.IsNewCharacter = false
+
 	characterBaseSaveData := characterSaveData.BaseSaveData()
 
 	// Make a copy for updating the launcher fields.

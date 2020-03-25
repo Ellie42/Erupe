@@ -12,8 +12,9 @@ const (
 )
 
 type CharacterSaveData struct {
-	CharID uint32
-	RP     uint16
+	CharID         uint32
+	RP             uint16
+	IsNewCharacter bool
 
 	// Use provided setter/getter
 	baseSaveData []byte
@@ -21,7 +22,7 @@ type CharacterSaveData struct {
 
 func GetCharacterSaveData(s *Session, charID uint32) (*CharacterSaveData, error) {
 	result, err := s.server.db.Query(
-		"SELECT id, savedata FROM characters WHERE id = $1",
+		"SELECT id, savedata, is_new_character FROM characters WHERE id = $1",
 		charID,
 	)
 
@@ -47,7 +48,7 @@ func GetCharacterSaveData(s *Session, charID uint32) (*CharacterSaveData, error)
 		return nil, err
 	}
 
-	err = result.Scan(&saveData.CharID, &compressedBaseSave)
+	err = result.Scan(&saveData.CharID, &compressedBaseSave, &saveData.IsNewCharacter)
 
 	if err != nil {
 		s.logger.Error(
@@ -87,14 +88,14 @@ func (save *CharacterSaveData) Save(s *Session, transaction *sql.Tx) error {
 
 	updateSQL := `
 		UPDATE characters 
-			SET savedata=$1
+			SET savedata=$1, is_new_character=$3
 		WHERE id=$2
 	`
 
 	if transaction != nil {
-		_, err = transaction.Exec(updateSQL, compressedData, save.CharID)
+		_, err = transaction.Exec(updateSQL, compressedData, save.CharID, save.IsNewCharacter)
 	} else {
-		_, err = s.server.db.Exec(updateSQL, compressedData, save.CharID)
+		_, err = s.server.db.Exec(updateSQL, compressedData, save.CharID, save.IsNewCharacter)
 	}
 
 	if err != nil {
