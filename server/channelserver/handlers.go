@@ -442,6 +442,7 @@ func removeSessionFromStage(s *Session) {
 
 	// Remove client from old stage.
 	delete(s.stage.clients, s)
+	delete(s.stage.reservedClientSlots, s.charID)
 
 	// Delete old stage objects owned by the client.
 	s.logger.Info("Sending MsgSysDeleteObject to old stage clients")
@@ -488,6 +489,10 @@ func handleMsgSysEnterStage(s *Session, p mhfpacket.MHFPacket) {
 
 func handleMsgSysBackStage(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgSysBackStage)
+
+	if s.stage != nil {
+		removeSessionFromStage(s)
+	}
 
 	// Transfer back to the saved stage ID before the previous move or enter.
 	s.Lock()
@@ -782,6 +787,10 @@ func handleMsgSysEnumerateStage(s *Session, p mhfpacket.MHFPacket) {
 	for sid, stage := range s.server.stages {
 		stage.RLock()
 		defer stage.RUnlock()
+
+		if len(stage.reservedClientSlots)+len(stage.clients) == 0 {
+			continue
+		}
 
 		resp.WriteUint16(uint16(len(stage.reservedClientSlots))) // Current players.
 		resp.WriteUint16(0)                                      // Unknown value
