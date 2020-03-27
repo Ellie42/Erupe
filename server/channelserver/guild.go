@@ -1,14 +1,11 @@
 package channelserver
 
 import (
-	"bytes"
 	"database/sql"
 	"fmt"
+	"github.com/Andoryuuta/Erupe/common/stringsupport"
 	"github.com/jmoiron/sqlx"
 	"go.uber.org/zap"
-	"golang.org/x/text/encoding/japanese"
-	"golang.org/x/text/transform"
-	"io/ioutil"
 	"time"
 )
 
@@ -330,6 +327,19 @@ func (guild *Guild) DonateRP(s *Session, rp uint16, transaction *sql.Tx) (err er
 	return nil
 }
 
+func (guild *Guild) Save(s *Session) error {
+	_, err := s.server.db.Exec(`
+		UPDATE guilds SET main_motto = $1 WHERE id=$2
+	`, guild.MainMotto, guild.ID)
+
+	if err != nil {
+		s.logger.Error("failed to update guild data", zap.Error(err), zap.Uint32("guildID", guild.ID))
+		return err
+	}
+
+	return nil
+}
+
 func buildGuildMemberObjectFromDBResult(rows *sqlx.Rows, err error, s *Session) (*GuildMember, error) {
 	memberData := &GuildMember{}
 
@@ -351,8 +361,7 @@ func CreateGuild(s *Session, guildName string) (int32, error) {
 		return 0, err
 	}
 
-	r := bytes.NewBuffer([]byte(guildName))
-	decoded, err := ioutil.ReadAll(transform.NewReader(r, japanese.ShiftJIS.NewDecoder()))
+	guildNameSafe, err := stringsupport.ConvertShiftJISToUTF8(guildName)
 
 	if err != nil {
 		panic(err)
@@ -360,7 +369,7 @@ func CreateGuild(s *Session, guildName string) (int32, error) {
 
 	guildResult, err := transaction.Query(
 		"INSERT INTO guilds (name, leader_id) VALUES ($1, $2) RETURNING id",
-		string(decoded), s.charID,
+		guildNameSafe, s.charID,
 	)
 
 	if err != nil {

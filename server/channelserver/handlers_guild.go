@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
+	"github.com/Andoryuuta/Erupe/common/stringsupport"
 	"sort"
 
 	"github.com/Andoryuuta/Erupe/network/mhfpacket"
@@ -87,6 +88,29 @@ func handleMsgMhfOperateGuild(s *Session, p mhfpacket.MHFPacket) {
 		if err != nil {
 			return
 		}
+	case mhfpacket.OPERATE_GUILD_ACTION_UPDATE_MOTTO:
+		pbf := byteframe.NewByteFrameFromBytes(pkt.UnkData)
+
+		mottoLength := pbf.ReadUint8()
+		_ = pbf.ReadUint32()
+
+		guild.MainMotto, err = stringsupport.ConvertShiftJISToUTF8(
+			stripNullTerminator(string(pbf.ReadBytes(uint(mottoLength)))),
+		)
+
+		if err != nil {
+			s.logger.Warn("failed to convert guild motto to UTF8", zap.Error(err))
+			bf.WriteUint32(0x01)
+			break
+		}
+
+		err := guild.Save(s)
+
+		if err != nil {
+			bf.WriteUint32(0x01)
+		}
+
+		bf.WriteUint32(0x00)
 	default:
 		panic(fmt.Sprintf("unhandled operate guild action '%d'", pkt.Action))
 	}
@@ -215,6 +239,18 @@ func handleMsgMhfInfoGuild(s *Session, p mhfpacket.MHFPacket) {
 	}
 
 	if err == nil && guild != nil {
+		err := stringsupport.PrepareStringsForTransport(guild)
+
+		if err != nil {
+			s.logger.Error(
+				"failed to prepare strings in guild object",
+				zap.Error(err),
+				zap.Any("guild", guild),
+			)
+			doAckSimpleFail(s, pkt.AckHandle, make([]byte, 4))
+			return
+		}
+
 		characterGuildData, err := GetCharacterGuildData(s, s.charID)
 
 		characterJoinedAt := uint32(0xFFFFFFFF)
