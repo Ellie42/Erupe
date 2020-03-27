@@ -273,7 +273,8 @@ func handleMsgMhfInfoGuild(s *Session, p mhfpacket.MHFPacket) {
 
 		bf.WriteUint32(guild.ID)
 		bf.WriteUint32(guild.Leader.CharID)
-		bf.WriteUint16(0x0) // Guild Rank?
+		// Unk 0x09 = Guild Hall available
+		bf.WriteUint16(0x09)
 		bf.WriteUint16(guild.MemberCount)
 
 		// Unk appears to be static
@@ -301,7 +302,7 @@ func handleMsgMhfInfoGuild(s *Session, p mhfpacket.MHFPacket) {
 		//if characterGuildData != nil && !characterGuildData.IsApplicant {
 		//	bf.WriteUint8(0x01)
 		//} else {
-		bf.WriteUint8(0xFF) // Unk
+		bf.WriteUint8(0x00) // Unk
 		//}
 
 		bf.WriteUint32(guild.RP)
@@ -317,8 +318,16 @@ func handleMsgMhfInfoGuild(s *Session, p mhfpacket.MHFPacket) {
 
 		// Unk
 		bf.WriteBytes([]byte{
-			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x3C, 0x00,
-			0x00, 0xD6, 0xD8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		})
+
+		// Unk flags
+		// Includes guild festival colour
+		// 0x32 = blue
+		bf.WriteUint8(0x32)
+
+		bf.WriteBytes([]byte{
+			0x00, 0x00, 0xD6, 0xD8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 		})
 
 		bf.WriteUint32(0x0) // Alliance ID
@@ -370,7 +379,7 @@ func handleMsgMhfInfoGuild(s *Session, p mhfpacket.MHFPacket) {
 
 		// There can be some more bytes here but I cannot make sense of them right now.
 
-		bf.WriteBytes([]byte{0x01, 0x01, 0x00, 0x00})
+		bf.WriteBytes([]byte{0x01, 0x02, 0x00, 0x00})
 
 		doAckBufSucceed(s, pkt.AckHandle, bf.Data())
 	} else {

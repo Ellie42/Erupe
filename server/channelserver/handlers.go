@@ -838,9 +838,23 @@ func handleMsgSysAcquireSemaphore(s *Session, p mhfpacket.MHFPacket) {}
 
 func handleMsgSysReleaseSemaphore(s *Session, p mhfpacket.MHFPacket) {}
 
-func handleMsgSysLockGlobalSema(s *Session, p mhfpacket.MHFPacket) {}
+func handleMsgSysLockGlobalSema(s *Session, p mhfpacket.MHFPacket) {
+	pkt := p.(*mhfpacket.MsgSysLockGlobalSema)
 
-func handleMsgSysUnlockGlobalSema(s *Session, p mhfpacket.MHFPacket) {}
+	bf := byteframe.NewByteFrame()
+	bf.WriteUint8(0x00)
+	bf.WriteUint8(0x00)
+	bf.WriteUint16(uint16(len(pkt.ServerID)))
+	bf.WriteBytes([]byte(pkt.ServerID))
+
+	doAckBufSucceed(s, pkt.AckHandle, bf.Data())
+}
+
+func handleMsgSysUnlockGlobalSema(s *Session, p mhfpacket.MHFPacket) {
+	pkt := p.(*mhfpacket.MsgSysUnlockGlobalSema)
+
+	doAckSimpleSucceed(s, pkt.AckHandle, make([]byte, 4))
+}
 
 func handleMsgSysCheckSemaphore(s *Session, p mhfpacket.MHFPacket) {}
 
@@ -2048,7 +2062,17 @@ func handleMsgMhfSavePartner(s *Session, p mhfpacket.MHFPacket) {
 	doAckSimpleSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
 }
 
-func handleMsgMhfGetGuildMissionList(s *Session, p mhfpacket.MHFPacket) {}
+func handleMsgMhfGetGuildMissionList(s *Session, p mhfpacket.MHFPacket) {
+	pkt := p.(*mhfpacket.MsgMhfGetGuildMissionList)
+
+	decoded, err := hex.DecodeString("000694610000023E000112990023000100000200015DDD232100069462000002F30000005F000C000200000300025DDD232100069463000002EA0000005F0006000100000100015DDD23210006946400000245000000530010000200000400025DDD232100069465000002B60001129B0019000100000200015DDD232100069466000003DC0000001B0010000100000600015DDD232100069467000002DA000112A00019000100000400015DDD232100069468000002A800010DEF0032000200000200025DDD2321000694690000045500000022003C000200000600025DDD23210006946A00000080000122D90046000200000300025DDD23210006946B000001960000003B000A000100000100015DDD23210006946C0000049200000046005A000300000600035DDD23210006946D000000A4000000260018000200000600025DDD23210006946E0000017A00010DE40096000300000100035DDD23210006946F000001BE0000005E0014000200000400025DDD2355000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")
+
+	if err != nil {
+		panic(err)
+	}
+
+	doAckBufSucceed(s, pkt.AckHandle, decoded)
+}
 
 func handleMsgMhfGetGuildMissionRecord(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfGetGuildMissionRecord)
