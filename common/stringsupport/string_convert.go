@@ -7,7 +7,7 @@ import (
 	"io/ioutil"
 )
 
-func MustShiftJISToUTF8(text string) string {
+func MustConvertShiftJISToUTF8(text string) string {
 	result, err := ConvertShiftJISToUTF8(text)
 
 	if err != nil {
@@ -17,7 +17,7 @@ func MustShiftJISToUTF8(text string) string {
 	return result
 }
 
-func MustUTF8ToShiftJIS(text string) string {
+func MustConvertUTF8ToShiftJIS(text string) string {
 	result, err := ConvertUTF8ToShiftJIS(text)
 
 	if err != nil {

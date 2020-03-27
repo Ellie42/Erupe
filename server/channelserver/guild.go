@@ -17,6 +17,7 @@ type Guild struct {
 	MemberCount uint16
 	Leader      *GuildMember
 	RP          uint32
+	Comment     string
 }
 
 type GuildMember struct {
@@ -33,7 +34,7 @@ type GuildMember struct {
 const guildInfoSelectQuery = `
 		SELECT g.id, g.name, g.rp, created_at, (
 			SELECT count(1) FROM guild_characters gc WHERE gc.guild_id = g.id AND gc.is_applicant = false
-		) AS member_count, leader_id, lc.name as leader_name, lgc.joined_at as leader_joined 
+		) AS member_count, leader_id, lc.name as leader_name, lgc.joined_at as leader_joined, comment
 			FROM guilds g
 					 JOIN guild_characters lgc ON lgc.character_id = leader_id
 					 JOIN characters lc on leader_id = lc.id
@@ -151,7 +152,7 @@ func buildGuildObjectFromDbResult(result *sql.Rows, err error, s *Session) (*Gui
 
 	err = result.Scan(
 		&guild.ID, &guild.Name, &guild.RP, &guild.CreatedAt, &guild.MemberCount,
-		&guild.Leader.CharID, &guild.Leader.Name, &guild.Leader.JoinedAt,
+		&guild.Leader.CharID, &guild.Leader.Name, &guild.Leader.JoinedAt, &guild.Comment,
 	)
 
 	guild.Leader.GuildID = guild.ID
@@ -329,8 +330,8 @@ func (guild *Guild) DonateRP(s *Session, rp uint16, transaction *sql.Tx) (err er
 
 func (guild *Guild) Save(s *Session) error {
 	_, err := s.server.db.Exec(`
-		UPDATE guilds SET main_motto = $1 WHERE id=$2
-	`, guild.MainMotto, guild.ID)
+		UPDATE guilds SET main_motto=$1, comment=$3 WHERE id=$2
+	`, guild.MainMotto, guild.ID, guild.Comment)
 
 	if err != nil {
 		s.logger.Error("failed to update guild data", zap.Error(err), zap.Uint32("guildID", guild.ID))

@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"github.com/Andoryuuta/Erupe/common/stringsupport"
 	"io/ioutil"
 	"os"
 	"path/filepath"
@@ -1089,7 +1090,8 @@ func handleMsgMhfSavedata(s *Session, p mhfpacket.MHFPacket) {
 		s.logger.Fatal("Failed to update character gr_override_level in db", zap.Error(err))
 	}
 
-	_, err = s.server.db.Exec("UPDATE characters SET name=$1 WHERE id=$2", strings.SplitN(string(decompressedData[88:100]), "\x00", 2)[0], s.charID)
+	characterName := strings.SplitN(string(decompressedData[88:100]), "\x00", 2)[0]
+	_, err = s.server.db.Exec("UPDATE characters SET name=$1 WHERE id=$2", stringsupport.MustConvertShiftJISToUTF8(characterName), s.charID)
 	if err != nil {
 		s.logger.Fatal("Failed to update character name in db", zap.Error(err))
 	}

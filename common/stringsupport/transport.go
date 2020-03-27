@@ -29,3 +29,13 @@ func PrepareStringsForTransport(obj interface{}) error {
 
 	return nil
 }
+
+func ConvertUTF8ToNullTerminatedShiftJIS(str string) (string, error) {
+	text, err := ConvertUTF8ToShiftJIS(str)
+
+	if err != nil {
+		return "", err
+	}
+
+	return fmt.Sprintf("%s\x00", text), nil
+}
