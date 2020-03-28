@@ -240,17 +240,8 @@ func handleMsgMhfInfoGuild(s *Session, p mhfpacket.MHFPacket) {
 	}
 
 	if err == nil && guild != nil {
-		err := stringsupport.PrepareStringsForTransport(guild)
-
-		if err != nil {
-			s.logger.Error(
-				"failed to prepare strings in guild object",
-				zap.Error(err),
-				zap.Any("guild", guild),
-			)
-			doAckSimpleFail(s, pkt.AckHandle, make([]byte, 4))
-			return
-		}
+		guildName := stringsupport.MustConvertUTF8ToShiftJIS(guild.Name)
+		guildComment := stringsupport.MustConvertUTF8ToShiftJIS(guild.Comment)
 
 		characterGuildData, err := GetCharacterGuildData(s, s.charID)
 
@@ -274,6 +265,8 @@ func handleMsgMhfInfoGuild(s *Session, p mhfpacket.MHFPacket) {
 		bf.WriteUint32(guild.ID)
 		bf.WriteUint32(guild.Leader.CharID)
 		// Unk 0x09 = Guild Hall available
+		// Guild hall available on at least
+		// 0x09 0x08 0x02
 		bf.WriteUint16(0x09)
 		bf.WriteUint16(guild.MemberCount)
 
@@ -292,18 +285,14 @@ func handleMsgMhfInfoGuild(s *Session, p mhfpacket.MHFPacket) {
 
 		bf.WriteUint32(uint32(guild.CreatedAt.Unix()))
 		bf.WriteUint32(characterJoinedAt)
-		bf.WriteUint8(uint8(len(guild.Name)))
-		bf.WriteUint8(uint8(len(guild.Comment)))
+		bf.WriteUint8(uint8(len(guildName)))
+		bf.WriteUint8(uint8(len(guildComment)))
 		bf.WriteUint8(uint8(5)) // Length of unknown string below
 		bf.WriteUint8(uint8(len(leaderName)))
-		bf.WriteBytes([]byte(guild.Name))
-		bf.WriteBytes([]byte(guild.Comment))
+		bf.WriteBytes([]byte(guildName))
+		bf.WriteBytes([]byte(guildComment))
 
-		//if characterGuildData != nil && !characterGuildData.IsApplicant {
-		//	bf.WriteUint8(0x01)
-		//} else {
-		bf.WriteUint8(0x00) // Unk
-		//}
+		bf.WriteUint8(FestivalColourCodes[guild.FestivalColour])
 
 		bf.WriteUint32(guild.RP)
 		bf.WriteBytes([]byte(leaderName))
@@ -322,9 +311,7 @@ func handleMsgMhfInfoGuild(s *Session, p mhfpacket.MHFPacket) {
 		})
 
 		// Unk flags
-		// Includes guild festival colour
-		// 0x32 = blue
-		bf.WriteUint8(0x32)
+		bf.WriteUint8(0x1E)
 
 		bf.WriteBytes([]byte{
 			0x00, 0x00, 0xD6, 0xD8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -377,9 +364,8 @@ func handleMsgMhfInfoGuild(s *Session, p mhfpacket.MHFPacket) {
 			bf.WriteBytes([]byte(applicantName))
 		}
 
-		// There can be some more bytes here but I cannot make sense of them right now.
-
-		bf.WriteBytes([]byte{0x01, 0x02, 0x00, 0x00})
+		// Unk
+		bf.WriteBytes([]byte{0x00, 0x00, 0x00, 0x00})
 
 		doAckBufSucceed(s, pkt.AckHandle, bf.Data())
 	} else {
@@ -427,12 +413,7 @@ func handleMsgMhfEnumerateGuild(s *Session, p mhfpacket.MHFPacket) {
 	bf.WriteUint16(uint16(len(guilds)))
 
 	for _, guild := range guilds {
-		err = stringsupport.PrepareStringsForTransport(guild)
-
-		if err != nil {
-			panic(err)
-		}
-
+		guildName := stringsupport.MustConvertUTF8ToShiftJIS(guild.Name)
 		leaderName := stringsupport.MustConvertUTF8ToShiftJIS(guild.Leader.Name)
 
 		bf.WriteUint8(0x00) // Unk
@@ -443,8 +424,8 @@ func handleMsgMhfEnumerateGuild(s *Session, p mhfpacket.MHFPacket) {
 		bf.WriteUint8(0x00)  // Unk
 		bf.WriteUint16(0x00) // Rank
 		bf.WriteUint32(uint32(guild.CreatedAt.Unix()))
-		bf.WriteUint8(uint8(len(guild.Name)))
-		bf.WriteBytes([]byte(guild.Name))
+		bf.WriteUint8(uint8(len(guildName)))
+		bf.WriteBytes([]byte(guildName))
 		bf.WriteUint8(uint8(len(leaderName)))
 		bf.WriteBytes([]byte(leaderName))
 		bf.WriteUint8(0x01) // Unk
