@@ -844,8 +844,9 @@ func handleMsgSysLockGlobalSema(s *Session, p mhfpacket.MHFPacket) {
 	bf := byteframe.NewByteFrame()
 	bf.WriteUint8(0x00)
 	bf.WriteUint8(0x00)
-	bf.WriteUint16(uint16(len(pkt.ServerID)))
-	bf.WriteBytes([]byte(pkt.ServerID))
+
+	bf.WriteUint16(uint16(len(pkt.UnkIDString1)))
+	bf.WriteBytes([]byte(pkt.UnkIDString1))
 
 	doAckBufSucceed(s, pkt.AckHandle, bf.Data())
 }
@@ -2538,35 +2539,6 @@ func handleMsgMhfGetTinyBin(s *Session, p mhfpacket.MHFPacket) {
 func handleMsgMhfPostTinyBin(s *Session, p mhfpacket.MHFPacket) {}
 
 func handleMsgMhfGetSenyuDailyCount(s *Session, p mhfpacket.MHFPacket) {}
-
-func handleMsgMhfGetGuildTargetMemberNum(s *Session, p mhfpacket.MHFPacket) {
-	pkt := p.(*mhfpacket.MsgMhfGetGuildTargetMemberNum)
-
-	var guild *Guild
-	var err error
-
-	if pkt.GuildID == 0x0 {
-		guild, err = GetGuildInfoByCharacterId(s, s.charID)
-	} else {
-		guild, err = GetGuildInfoByID(s, pkt.GuildID)
-	}
-
-	if err != nil {
-		s.logger.Warn("failed to find guild")
-		doAckBufSucceed(s, pkt.AckHandle, make([]byte, 4))
-		return
-	} else if guild == nil {
-		doAckBufSucceed(s, pkt.AckHandle, make([]byte, 4))
-		return
-	}
-
-	bf := byteframe.NewByteFrame()
-
-	bf.WriteUint16(0x0)
-	bf.WriteUint16(guild.MemberCount - 1)
-
-	doAckBufSucceed(s, pkt.AckHandle, bf.Data())
-}
 
 func handleMsgMhfGetBoostRight(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfGetBoostRight)

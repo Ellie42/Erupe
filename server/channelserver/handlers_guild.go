@@ -275,7 +275,7 @@ func handleMsgMhfInfoGuild(s *Session, p mhfpacket.MHFPacket) {
 
 		if characterGuildData == nil || characterGuildData.IsApplicant {
 			bf.WriteUint16(0x00)
-		} else if characterGuildData.IsSubLeader {
+		} else if characterGuildData.IsSubLeader || guild.Leader.CharID == s.charID {
 			bf.WriteUint16(0x01)
 		} else {
 			bf.WriteUint16(0x02)
@@ -635,4 +635,33 @@ func handleMsgMhfSetRejectGuildScout(s *Session, p mhfpacket.MHFPacket) {
 	}
 
 	doAckSimpleSucceed(s, pkt.AckHandle, nil)
+}
+
+func handleMsgMhfGetGuildTargetMemberNum(s *Session, p mhfpacket.MHFPacket) {
+	pkt := p.(*mhfpacket.MsgMhfGetGuildTargetMemberNum)
+
+	var guild *Guild
+	var err error
+
+	if pkt.GuildID == 0x0 {
+		guild, err = GetGuildInfoByCharacterId(s, s.charID)
+	} else {
+		guild, err = GetGuildInfoByID(s, pkt.GuildID)
+	}
+
+	if err != nil {
+		s.logger.Warn("failed to find guild", zap.Error(err), zap.Uint32("guildID", pkt.GuildID))
+		doAckBufSucceed(s, pkt.AckHandle, make([]byte, 4))
+		return
+	} else if guild == nil {
+		doAckBufSucceed(s, pkt.AckHandle, make([]byte, 4))
+		return
+	}
+
+	bf := byteframe.NewByteFrame()
+
+	bf.WriteUint16(0x0)
+	bf.WriteUint16(guild.MemberCount - 1)
+
+	doAckBufSucceed(s, pkt.AckHandle, bf.Data())
 }
