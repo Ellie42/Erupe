@@ -845,8 +845,8 @@ func handleMsgSysLockGlobalSema(s *Session, p mhfpacket.MHFPacket) {
 	bf.WriteUint8(0x00)
 	bf.WriteUint8(0x00)
 
-	bf.WriteUint16(uint16(len(pkt.UnkIDString1)))
-	bf.WriteBytes([]byte(pkt.UnkIDString1))
+	bf.WriteUint16(uint16(len(pkt.ServerChannelIDString)))
+	bf.WriteBytes([]byte(pkt.ServerChannelIDString))
 
 	doAckBufSucceed(s, pkt.AckHandle, bf.Data())
 }

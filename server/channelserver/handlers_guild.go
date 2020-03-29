@@ -48,7 +48,7 @@ func handleMsgMhfOperateGuild(s *Session, p mhfpacket.MHFPacket) {
 
 	switch pkt.Action {
 	case mhfpacket.OPERATE_GUILD_ACTION_DISBAND:
-		if guild.Leader.CharID != s.charID {
+		if guild.LeaderCharID != s.charID {
 			s.logger.Warn(fmt.Sprintf("character '%d' is attempting to manage guild '%d' without permission", s.charID, guild.ID))
 			return
 		}
@@ -69,7 +69,7 @@ func handleMsgMhfOperateGuild(s *Session, p mhfpacket.MHFPacket) {
 			// All successful acks return 0x01, assuming 0x00 is failure
 			bf.WriteUint32(0x00)
 		} else {
-			bf.WriteUint32(guild.Leader.CharID)
+			bf.WriteUint32(guild.LeaderCharID)
 		}
 	case mhfpacket.OPERATE_GUILD_ACTION_LEAVE:
 		err := guild.RemoveCharacter(s, s.charID)
@@ -202,7 +202,7 @@ func handleMsgMhfOperateGuildMember(s *Session, p mhfpacket.MHFPacket) {
 
 	character, err := GetCharacterGuildData(s, pkt.CharID)
 
-	if err != nil || character == nil || (!character.IsSubLeader && guild.Leader.CharID != s.charID) {
+	if err != nil || character == nil || (!character.IsSubLeader && guild.LeaderCharID != s.charID) {
 		sendResponse(false)
 		return
 	}
@@ -263,11 +263,11 @@ func handleMsgMhfInfoGuild(s *Session, p mhfpacket.MHFPacket) {
 		bf := byteframe.NewByteFrame()
 
 		bf.WriteUint32(guild.ID)
-		bf.WriteUint32(guild.Leader.CharID)
-		// Unk 0x09 = Guild Hall available
+		bf.WriteUint32(guild.LeaderCharID)
+		// Unk 0x09 = Guild Hall available, maybe guild hall type?
 		// Guild hall available on at least
 		// 0x09 0x08 0x02
-		bf.WriteUint16(0x09)
+		bf.WriteUint16(guild.GuildHallType)
 		bf.WriteUint16(guild.MemberCount)
 
 		// Unk appears to be static
@@ -275,13 +275,13 @@ func handleMsgMhfInfoGuild(s *Session, p mhfpacket.MHFPacket) {
 
 		if characterGuildData == nil || characterGuildData.IsApplicant {
 			bf.WriteUint16(0x00)
-		} else if characterGuildData.IsSubLeader || guild.Leader.CharID == s.charID {
+		} else if characterGuildData.IsSubLeader || guild.LeaderCharID == s.charID {
 			bf.WriteUint16(0x01)
 		} else {
 			bf.WriteUint16(0x02)
 		}
 
-		leaderName := stringsupport.MustConvertUTF8ToShiftJIS(guild.Leader.Name) + "\x00"
+		leaderName := stringsupport.MustConvertUTF8ToShiftJIS(guild.LeaderName) + "\x00"
 
 		bf.WriteUint32(uint32(guild.CreatedAt.Unix()))
 		bf.WriteUint32(characterJoinedAt)
@@ -311,7 +311,7 @@ func handleMsgMhfInfoGuild(s *Session, p mhfpacket.MHFPacket) {
 		})
 
 		// Unk flags
-		bf.WriteUint8(0x1E)
+		bf.WriteUint8(0x32)
 
 		bf.WriteBytes([]byte{
 			0x00, 0x00, 0xD6, 0xD8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -415,11 +415,11 @@ func handleMsgMhfEnumerateGuild(s *Session, p mhfpacket.MHFPacket) {
 
 	for _, guild := range guilds {
 		guildName := stringsupport.MustConvertUTF8ToShiftJIS(guild.Name)
-		leaderName := stringsupport.MustConvertUTF8ToShiftJIS(guild.Leader.Name)
+		leaderName := stringsupport.MustConvertUTF8ToShiftJIS(guild.LeaderName)
 
 		bf.WriteUint8(0x00) // Unk
 		bf.WriteUint32(guild.ID)
-		bf.WriteUint32(guild.Leader.CharID)
+		bf.WriteUint32(guild.LeaderCharID)
 		bf.WriteUint16(guild.MemberCount)
 		bf.WriteUint8(0x00)  // Unk
 		bf.WriteUint8(0x00)  // Unk
@@ -453,7 +453,7 @@ func handleMsgMhfArrangeGuildMember(s *Session, p mhfpacket.MHFPacket) {
 		return
 	}
 
-	if guild.Leader.CharID != s.charID {
+	if guild.LeaderCharID != s.charID {
 		s.logger.Error("non leader attempting to rearrange guild members!",
 			zap.Uint32("charID", s.charID),
 			zap.Uint32("guildID", guild.ID),

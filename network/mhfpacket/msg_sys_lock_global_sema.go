@@ -7,9 +7,9 @@ import (
 
 // MsgSysLockGlobalSema represents the MSG_SYS_LOCK_GLOBAL_SEMA
 type MsgSysLockGlobalSema struct {
-	AckHandle    uint32
-	UnkIDString0 string
-	UnkIDString1 string
+	AckHandle             uint32
+	UnkIDString0          string
+	ServerChannelIDString string
 }
 
 // Opcode returns the ID associated with this packet type.
@@ -25,7 +25,7 @@ func (m *MsgSysLockGlobalSema) Parse(bf *byteframe.ByteFrame) error {
 	serverIDLength := bf.ReadUint16()
 
 	m.UnkIDString0 = string(bf.ReadBytes(uint(stageNameLength)))
-	m.UnkIDString1 = string(bf.ReadBytes(uint(serverIDLength)))
+	m.ServerChannelIDString = string(bf.ReadBytes(uint(serverIDLength)))
 
 	return nil
 }
