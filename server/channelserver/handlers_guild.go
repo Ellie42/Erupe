@@ -364,8 +364,9 @@ func handleMsgMhfInfoGuild(s *Session, p mhfpacket.MHFPacket) {
 			bf.WriteBytes([]byte(applicantName))
 		}
 
-		// Unk
-		bf.WriteBytes([]byte{0x00, 0x00, 0x00, 0x00})
+		// There can be some more bytes here but I cannot make sense of them right now.
+
+		bf.WriteBytes([]byte{0x01, 0x01, 0x00, 0x00})
 
 		doAckBufSucceed(s, pkt.AckHandle, bf.Data())
 	} else {
