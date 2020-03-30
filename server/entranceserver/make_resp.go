@@ -2,6 +2,7 @@ package entranceserver
 
 import (
 	"encoding/binary"
+	"github.com/Andoryuuta/Erupe/common/stringsupport"
 	"net"
 
 	"github.com/Andoryuuta/Erupe/config"
@@ -28,7 +29,7 @@ func encodeServerInfo(serverInfos []config.EntranceServerInfo) []byte {
 		bf.WriteUint8(si.Type)
 		bf.WriteUint8(si.Season)
 		bf.WriteUint8(si.Unk6)
-		bf.WriteBytes(paddedString(si.Name, 66))
+		bf.WriteBytes(paddedString(stringsupport.MustConvertUTF8ToShiftJIS(si.Name), 66))
 		bf.WriteUint32(si.AllowedClientFlags)
 
 		for channelIdx, ci := range si.Channels {

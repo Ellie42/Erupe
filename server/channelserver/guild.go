@@ -3,19 +3,43 @@ package channelserver
 import (
 	"database/sql"
 	"fmt"
+	"github.com/Andoryuuta/Erupe/common/stringsupport"
 	"github.com/jmoiron/sqlx"
 	"go.uber.org/zap"
 	"time"
 )
 
+type FestivalColour string
+
+const (
+	FestivalColourNone = "none"
+	FestivalColourRed  = "red"
+	FestivalColourBlue = "blue"
+)
+
+var FestivalColourCodes = map[FestivalColour]uint8{
+	FestivalColourBlue: 0x00,
+	FestivalColourRed:  0x01,
+	FestivalColourNone: 0xFF,
+}
+
 type Guild struct {
-	ID          uint32
-	Name        string
-	MainMotto   string
-	CreatedAt   time.Time
-	MemberCount uint16
-	Leader      *GuildMember
-	RP          uint32
+	ID             uint32         `db:"id"`
+	Name           string         `db:"name"`
+	MainMotto      string         `db:"main_motto"`
+	CreatedAt      time.Time      `db:"created_at"`
+	MemberCount    uint16         `db:"member_count"`
+	RP             uint32         `db:"rp"`
+	Comment        string         `db:"comment"`
+	FestivalColour FestivalColour `db:"festival_colour"`
+	GuildHallType  uint16         `db:"guild_hall"`
+
+	GuildLeader
+}
+
+type GuildLeader struct {
+	LeaderCharID uint32 `db:"leader_id"`
+	LeaderName   string `db:"leader_name"`
 }
 
 type GuildMember struct {
@@ -30,18 +54,53 @@ type GuildMember struct {
 }
 
 const guildInfoSelectQuery = `
-		SELECT g.id, g.name, g.rp, created_at, (
-			SELECT count(1) FROM guild_characters gc WHERE gc.guild_id = g.id AND gc.is_applicant = false
-		) AS member_count, leader_id, lc.name as leader_name, lgc.joined_at as leader_joined 
-			FROM guilds g
-					 JOIN guild_characters lgc ON lgc.character_id = leader_id
-					 JOIN characters lc on leader_id = lc.id
+SELECT g.id,
+       g.name,
+       g.rp,
+       created_at,
+       (
+           SELECT count(1) FROM guild_characters gc WHERE gc.guild_id = g.id AND gc.is_applicant = false
+       )             AS member_count,
+       leader_id,
+       lc.name as leader_name,
+       comment,
+       festival_colour,
+	   guild_hall
+FROM guilds g
+         JOIN guild_characters lgc ON lgc.character_id = leader_id
+         JOIN characters lc on leader_id = lc.id
 `
+
+func buildGuildObjectFromDbResult(result *sqlx.Rows, err error, s *Session) (*Guild, error) {
+	guild := &Guild{}
+
+	err = result.StructScan(guild)
+
+	if err != nil {
+		s.logger.Error("failed to retrieve guild data from database", zap.Error(err))
+		return nil, err
+	}
+
+	return guild, nil
+}
+
+func (guild *Guild) Save(s *Session) error {
+	_, err := s.server.db.Exec(`
+		UPDATE guilds SET main_motto=$1, comment=$3, festival_colour=$4 WHERE id=$2
+	`, guild.MainMotto, guild.ID, guild.Comment, guild.FestivalColour)
+
+	if err != nil {
+		s.logger.Error("failed to update guild data", zap.Error(err), zap.Uint32("guildID", guild.ID))
+		return err
+	}
+
+	return nil
+}
 
 func FindGuildsByName(s *Session, name string) ([]*Guild, error) {
 	searchTerm := fmt.Sprintf("%%%s%%", name)
 
-	rows, err := s.server.db.Query(fmt.Sprintf(`
+	rows, err := s.server.db.Queryx(fmt.Sprintf(`
 		%s
 		WHERE g.name ILIKE $1
 	`, guildInfoSelectQuery), searchTerm)
@@ -69,7 +128,7 @@ func FindGuildsByName(s *Session, name string) ([]*Guild, error) {
 }
 
 func GetGuildInfoByID(s *Session, guildID uint32) (*Guild, error) {
-	rows, err := s.server.db.Query(fmt.Sprintf(`
+	rows, err := s.server.db.Queryx(fmt.Sprintf(`
 		%s
 		WHERE g.id = $1 
 		LIMIT 1
@@ -90,7 +149,7 @@ func GetGuildInfoByID(s *Session, guildID uint32) (*Guild, error) {
 }
 
 func GetGuildInfoByCharacterId(s *Session, charID uint32) (*Guild, error) {
-	rows, err := s.server.db.Query(fmt.Sprintf(`
+	rows, err := s.server.db.Queryx(fmt.Sprintf(`
 		%s
 		 JOIN guild_characters gc
 			  ON g.id = gc.guild_id AND gc.character_id = $1
@@ -141,27 +200,6 @@ func GetGuildMembers(s *Session, guildID uint32, applicants bool) ([]*GuildMembe
 	}
 
 	return members, nil
-}
-
-func buildGuildObjectFromDbResult(result *sql.Rows, err error, s *Session) (*Guild, error) {
-	guild := &Guild{
-		Leader: &GuildMember{},
-	}
-
-	err = result.Scan(
-		&guild.ID, &guild.Name, &guild.RP, &guild.CreatedAt, &guild.MemberCount,
-		&guild.Leader.CharID, &guild.Leader.Name, &guild.Leader.JoinedAt,
-	)
-
-	guild.Leader.GuildID = guild.ID
-	guild.Leader.JoinedAt = guild.CreatedAt
-
-	if err != nil {
-		s.logger.Error("failed to retrieve guild data from database", zap.Error(err))
-		return nil, err
-	}
-
-	return guild, nil
 }
 
 func GetCharacterGuildData(s *Session, charID uint32) (*GuildMember, error) {
@@ -347,9 +385,15 @@ func CreateGuild(s *Session, guildName string) (int32, error) {
 		return 0, err
 	}
 
+	guildNameSafe, err := stringsupport.ConvertShiftJISToUTF8(guildName)
+
+	if err != nil {
+		panic(err)
+	}
+
 	guildResult, err := transaction.Query(
 		"INSERT INTO guilds (name, leader_id) VALUES ($1, $2) RETURNING id",
-		guildName, s.charID,
+		guildNameSafe, s.charID,
 	)
 
 	if err != nil {
