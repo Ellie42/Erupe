@@ -842,8 +842,11 @@ func handleMsgSysLockGlobalSema(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgSysLockGlobalSema)
 
 	bf := byteframe.NewByteFrame()
+	// Unk
+	// 0x00 when no ID sent
+	// 0x02 when ID sent
 	bf.WriteUint8(0x00)
-	bf.WriteUint8(0x00)
+	bf.WriteUint8(0x00) // Unk
 
 	bf.WriteUint16(uint16(len(pkt.ServerChannelIDString)))
 	bf.WriteBytes([]byte(pkt.ServerChannelIDString))
