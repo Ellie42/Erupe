@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"math/bits"
 
 	"github.com/Andoryuuta/Erupe/network/mhfpacket"
 	"github.com/Andoryuuta/Erupe/server/channelserver/compression/deltacomp"
@@ -358,82 +359,84 @@ func doStageTransfer(s *Session, ackHandle uint32, stageID string) {
 
 	// Notify existing stage clients that this new client has entered.
 	s.logger.Info("Sending MsgSysInsertUser")
-	s.stage.BroadcastMHF(&mhfpacket.MsgSysInsertUser{
-		CharID: s.charID,
-	}, s)
+	if(s.stage != nil){ // avoids lock up when using bed for dream quests
+		s.stage.BroadcastMHF(&mhfpacket.MsgSysInsertUser{
+			CharID: s.charID,
+		}, s)
 
-	// It seems to be acceptable to recast all MSG_SYS_SET_USER_BINARY messages so far,
-	// players are still notified when a new player has joined the stage.
-	// These extra messages may not be needed
-	//s.stage.BroadcastMHF(&mhfpacket.MsgSysNotifyUserBinary{
-	//	CharID:     s.charID,
-	//	BinaryType: 1,
-	//}, s)
-	//s.stage.BroadcastMHF(&mhfpacket.MsgSysNotifyUserBinary{
-	//	CharID:     s.charID,
-	//	BinaryType: 2,
-	//}, s)
-	//s.stage.BroadcastMHF(&mhfpacket.MsgSysNotifyUserBinary{
-	//	CharID:     s.charID,
-	//	BinaryType: 3,
-	//}, s)
+		// It seems to be acceptable to recast all MSG_SYS_SET_USER_BINARY messages so far,
+		// players are still notified when a new player has joined the stage.
+		// These extra messages may not be needed
+		//s.stage.BroadcastMHF(&mhfpacket.MsgSysNotifyUserBinary{
+		//	CharID:     s.charID,
+		//	BinaryType: 1,
+		//}, s)
+		//s.stage.BroadcastMHF(&mhfpacket.MsgSysNotifyUserBinary{
+		//	CharID:     s.charID,
+		//	BinaryType: 2,
+		//}, s)
+		//s.stage.BroadcastMHF(&mhfpacket.MsgSysNotifyUserBinary{
+		//	CharID:     s.charID,
+		//	BinaryType: 3,
+		//}, s)
 
-	//Notify the entree client about all of the existing clients in the stage.
-	s.logger.Info("Notifying entree about existing stage clients")
-	s.stage.RLock()
-	clientNotif := byteframe.NewByteFrame()
-	for session := range s.stage.clients {
-		var cur mhfpacket.MHFPacket
-		cur = &mhfpacket.MsgSysInsertUser{
-			CharID: session.charID,
+		//Notify the entree client about all of the existing clients in the stage.
+		s.logger.Info("Notifying entree about existing stage clients")
+		s.stage.RLock()
+		clientNotif := byteframe.NewByteFrame()
+		for session := range s.stage.clients {
+			var cur mhfpacket.MHFPacket
+			cur = &mhfpacket.MsgSysInsertUser{
+				CharID: session.charID,
+			}
+			clientNotif.WriteUint16(uint16(cur.Opcode()))
+			cur.Build(clientNotif)
+
+			cur = &mhfpacket.MsgSysNotifyUserBinary{
+				CharID:     session.charID,
+				BinaryType: 1,
+			}
+			clientNotif.WriteUint16(uint16(cur.Opcode()))
+			cur.Build(clientNotif)
+
+			cur = &mhfpacket.MsgSysNotifyUserBinary{
+				CharID:     session.charID,
+				BinaryType: 2,
+			}
+			clientNotif.WriteUint16(uint16(cur.Opcode()))
+			cur.Build(clientNotif)
+
+			cur = &mhfpacket.MsgSysNotifyUserBinary{
+				CharID:     session.charID,
+				BinaryType: 3,
+			}
+			clientNotif.WriteUint16(uint16(cur.Opcode()))
+			cur.Build(clientNotif)
 		}
-		clientNotif.WriteUint16(uint16(cur.Opcode()))
-		cur.Build(clientNotif)
+		s.stage.RUnlock()
+		clientNotif.WriteUint16(0x0010) // End it.
+		s.QueueSend(clientNotif.Data())
 
-		cur = &mhfpacket.MsgSysNotifyUserBinary{
-			CharID:     session.charID,
-			BinaryType: 1,
+		// Notify the client to duplicate the existing objects.
+		s.logger.Info("Notifying entree about existing stage objects")
+		clientDupObjNotif := byteframe.NewByteFrame()
+		s.stage.RLock()
+		for _, obj := range s.stage.objects {
+			cur := &mhfpacket.MsgSysDuplicateObject{
+				ObjID:       obj.id,
+				X:           obj.x,
+				Y:           obj.y,
+				Z:           obj.z,
+				Unk0:        0,
+				OwnerCharID: obj.ownerCharID,
+			}
+			clientDupObjNotif.WriteUint16(uint16(cur.Opcode()))
+			cur.Build(clientDupObjNotif)
 		}
-		clientNotif.WriteUint16(uint16(cur.Opcode()))
-		cur.Build(clientNotif)
-
-		cur = &mhfpacket.MsgSysNotifyUserBinary{
-			CharID:     session.charID,
-			BinaryType: 2,
-		}
-		clientNotif.WriteUint16(uint16(cur.Opcode()))
-		cur.Build(clientNotif)
-
-		cur = &mhfpacket.MsgSysNotifyUserBinary{
-			CharID:     session.charID,
-			BinaryType: 3,
-		}
-		clientNotif.WriteUint16(uint16(cur.Opcode()))
-		cur.Build(clientNotif)
+		s.stage.RUnlock()
+		clientDupObjNotif.WriteUint16(0x0010) // End it.
+		s.QueueSend(clientDupObjNotif.Data())
 	}
-	s.stage.RUnlock()
-	clientNotif.WriteUint16(0x0010) // End it.
-	s.QueueSend(clientNotif.Data())
-
-	// Notify the client to duplicate the existing objects.
-	s.logger.Info("Notifying entree about existing stage objects")
-	clientDupObjNotif := byteframe.NewByteFrame()
-	s.stage.RLock()
-	for _, obj := range s.stage.objects {
-		cur := &mhfpacket.MsgSysDuplicateObject{
-			ObjID:       obj.id,
-			X:           obj.x,
-			Y:           obj.y,
-			Z:           obj.z,
-			Unk0:        0,
-			OwnerCharID: obj.ownerCharID,
-		}
-		clientDupObjNotif.WriteUint16(uint16(cur.Opcode()))
-		cur.Build(clientDupObjNotif)
-	}
-	s.stage.RUnlock()
-	clientDupObjNotif.WriteUint16(0x0010) // End it.
-	s.QueueSend(clientDupObjNotif.Data())
 }
 
 func removeSessionFromStage(s *Session) {
@@ -879,7 +882,13 @@ func handleMsgSysCreateObject(s *Session, p mhfpacket.MHFPacket) {
 
 	// Make sure we have a stage.
 	if s.stage == nil {
-		s.logger.Fatal("StageID not in the stages map!", zap.String("stageID", s.stageID))
+		// temp fix for bed dream quests
+		resp := byteframe.NewByteFrame()
+		resp.WriteUint32(0) // Unk, is this echoed back from pkt.TargetCount?
+		resp.WriteUint32(1) // New local obj handle.
+		s.QueueAck(pkt.AckHandle, resp.Data())
+		return;
+		//s.logger.Fatal("StageID not in the stages map!", zap.String("stageID", s.stageID))
 	}
 
 	// Lock the stage.
@@ -1037,7 +1046,9 @@ func handleMsgSysAuthTerminal(s *Session, p mhfpacket.MHFPacket) {}
 func handleMsgSysReserve5C(s *Session, p mhfpacket.MHFPacket) {}
 
 func handleMsgSysRightsReload(s *Session, p mhfpacket.MHFPacket) {
-
+	pkt := p.(*mhfpacket.MsgSysRightsReload)
+	updateRights(s)
+	doAckSimpleSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
 }
 
 func handleMsgSysReserve5E(s *Session, p mhfpacket.MHFPacket) {}
@@ -1191,9 +1202,9 @@ func handleMsgMhfApplyDistItem(s *Session, p mhfpacket.MHFPacket) {
 	// int8:  distribution type
 	// 00 = legs, 01 = Head, 02 = Chest, 03 = Arms, 04 = Waist, 05 = Melee, 06 = Ranged, 07 = Item, 08 == furniture
 	// ids are wrong shop displays in random order
-	// 09 = Nothing, 10 = Null Point, 11 = Festi Point, 12 = Zeny, 13 = Pugi Outfit, 14 = Null Points, 15 = My Tore points
-	// 16 = Gook Costumes, 17 = Image Change Points, 18 = N Points, 19 = Gacha Coins, 20 = Trial Gacha Coins, 21 = Frontier points
-	// 22 = Guild Points, 23 = RP?, 30 = Item Box Page, 31 = Equipment Box Page
+	// 09 = Nothing, 10 = Null Point, 11 = Festi Point, 12 = Zeny, 13 = Null, 14 = Null Points, 15 = My Tore points
+	// 16 = Restyle Point, 17 = N Points, 18 = Nothing, 19 = Gacha Coins, 20 = Trial Gacha Coins, 21 = Frontier points
+	// 22 = ?, 23 = Guild Points, 30 = Item Box Page, 31 = Equipment Box Page
 	// int16: Unk
 	// int16: Item when type 07
 	// int16: Unk
@@ -1203,7 +1214,6 @@ func handleMsgMhfApplyDistItem(s *Session, p mhfpacket.MHFPacket) {
 	if pkt.RequestType == 0 {
 		doAckBufSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
 	} else if pkt.RequestType == 0x000000FF {
-		// box expansions
 		data, _ := hex.DecodeString("0052a49100021f00000000000000140274db991e00000000000000140274db99")
 		doAckBufSucceed(s, pkt.AckHandle, data)
 	} else {
@@ -1402,54 +1412,6 @@ func handleMsgMhfEnumerateOrder(s *Session, p mhfpacket.MHFPacket) {
 	stubEnumerateNoResults(s, pkt.AckHandle)
 }
 
-func handleMsgMhfEnumerateShop(s *Session, p mhfpacket.MHFPacket) {
-	pkt := p.(*mhfpacket.MsgMhfEnumerateShop)
-	// SHOP TYPES:
-	// 01 = Running Gachas, 04 = N Points, 05 = GCP, 07 = Item to GCP, 08 = Diva Defense, 10 = Hunter's Road
-	// STORE FORMAT:
-	// Int16: total item count
-	// Int16: total item count
-	// ITEM FORMAT:
-	// int16 x 2: Unique item hash for tracking server side purchases? Swapping across items didn't change image/cost/function etc.
-	// int16: Unk, padding?
-	// int16: Item ID
-	// int16: Unk, likely padding?
-	// int16: GCP returns
-	// int16: Number traded at once?
-	// int16: HR or SR Requirement
-	// int16: Whichever of the above it isn't?
-	// int16: GR Requirement
-	// int16: Store level requirement
-	// int16: Maximum quantity purchasable
-	// int16: Unk
-	// int16: Road floors cleared requirement
-	// int16: Road White Fatalis weekly kills
-	if pkt.ShopType == 1 {
-		stubEnumerateNoResults(s, pkt.AckHandle)
-	} else if pkt.ShopType == 7 {
-		// GCP conversion store
-		if pkt.ShopID == 0 {
-			// Items to GCP exchange. Gou Tickets, Shiten Tickets, GP Tickets
-			data, _ := hex.DecodeString("000300033a9186fb000033860000000a000100000000000000000000000000000000097fdb1c0000067e0000000a0001000000000000000000000000000000001374db29000027c300000064000100000000000000000000000000000000")
-			doAckBufSucceed(s, pkt.AckHandle, data)
-		} else {
-			doAckBufSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
-		}
-	} else if pkt.ShopType == 8 {
-		// Dive Defense sections
-		// 00 = normal level limited exchange store, 05 = GCP skill store, 07 = limited quantity exchange
-		if pkt.ShopID == 5 {
-			// diva defense skill level limited store
-			data, _ := hex.DecodeString("001f001f2c9365c1000000010000001e000a0000000000000000000a0000000000001979f1c2000000020000003c000a0000000000000000000a0000000000003e5197df000000030000003c000a0000000000000000000a000000000000219337c0000000040000001e000a0000000000000000000a00000000000009b24c9d000000140000001e000a0000000000000000000a0000000000001f1d496e000000150000001e000a0000000000000000000a0000000000003b918fcb000000160000003c000a0000000000000000000a0000000000000b7fd81c000000170000003c000a0000000000000000000a0000000000001374f239000000180000003c000a0000000000000000000a00000000000026950cba0000001c0000003c000a0000000000000000000a0000000000003797eae70000001d0000003c000a012b000000000000000a00000000000015758ad8000000050000003c00000000000000000000000a0000000000003c7035050000000600000050000a0000000000000001000a00000000000024f3b5560000000700000050000a0000000000000001000a00000000000000b600330000000800000050000a0000000000000001000a0000000000002efdce840000001900000050000a0000000000000001000a0000000000002d9365f10000001a00000050000a0000000000000001000a0000000000001979f3420000001f00000050000a012b000000000001000a0000000000003f5397cf0000002000000050000a012b000000000001000a000000000000319337c00000002100000050000a012b000000000001000a00000000000008b04cbd0000000900000064000a0000000000000002000a0000000000000b1d4b6e0000000a00000064000a0000000000000002000a0000000000003b918feb0000000b00000064000a0000000000000002000a0000000000001b7fd81c0000000c00000064000a0000000000000002000a0000000000001276f2290000000d00000064000a0000000000000002000a00000000000022950cba0000000e000000c8000a0000000000000002000a0000000000003697ead70000000f000001f4000a0000000000000003000a00000000000005758a5800000010000003e8000a0000000000000003000a0000000000003c7035250000001b000001f4000a0000000000010003000a00000000000034f3b5d60000001e00000064000a012b000000000003000a00000000000000b600030000002200000064000a0000000000010003000a000000000000")
-			doAckBufSucceed(s, pkt.AckHandle, data)
-		} else {
-			doAckBufSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
-		}
-	} else {
-		doAckBufSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
-	}
-}
-
 func handleMsgMhfGetExtraInfo(s *Session, p mhfpacket.MHFPacket) {}
 
 func handleMsgMhfUpdateInterior(s *Session, p mhfpacket.MHFPacket) {}
@@ -1526,19 +1488,62 @@ func handleMsgMhfEnumerateFestaMember(s *Session, p mhfpacket.MHFPacket) {}
 
 func handleMsgMhfVoteFesta(s *Session, p mhfpacket.MHFPacket) {}
 
-func handleMsgMhfAcquireCafeItem(s *Session, p mhfpacket.MHFPacket) {}
+func handleMsgMhfAcquireCafeItem(s *Session, p mhfpacket.MHFPacket) {
+	pkt := p.(*mhfpacket.MsgMhfAcquireCafeItem)
+	var netcafe_points int
+	err := s.server.db.QueryRow("UPDATE characters SET netcafe_points = netcafe_points - $1 WHERE id = $2 RETURNING netcafe_points", pkt.PointCost, s.charID).Scan(&netcafe_points)
+	if err != nil {
+		s.logger.Fatal("Failed to get plate data savedata from db", zap.Error(err))
+	}
+	resp := byteframe.NewByteFrame()
+	resp.WriteUint32(uint32(netcafe_points))
+	doAckSimpleSucceed(s, pkt.AckHandle, resp.Data())
+}
 
 func handleMsgMhfUpdateCafepoint(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfUpdateCafepoint)
-	// not sized
-	doAckSimpleSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x04, 0x8b})
+	var netcafe_points int
+	err := s.server.db.QueryRow("SELECT COALESCE(netcafe_points, 0) FROM characters WHERE id = $1", s.charID).Scan(&netcafe_points)
+	if err != nil {
+		s.logger.Fatal("Failed to get plate data savedata from db", zap.Error(err))
+	}
+	resp := byteframe.NewByteFrame()
+	resp.WriteUint32(uint32(netcafe_points))
+	doAckBufSucceed(s, pkt.AckHandle, resp.Data())
 }
 
 func handleMsgMhfCheckDailyCafepoint(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfCheckDailyCafepoint)
 
 	// I am not sure exactly what this does, but all responses I have seen include this exact sequence of bytes
-	doAckBufSucceed(s, pkt.AckHandle, []byte{0x01, 0x00, 0x00, 0x00, 0x05, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x01})
+	// 1 daily, 5 daily halk pots, 3 point boosted quests, also adds 5 netcafe points but not sent to client
+	// available once after midday every day
+
+	// get next midday
+	var t = time.Now().In(time.FixedZone("UTC+9", 9*60*60))
+	year, month, day := t.Date()
+	midday := time.Date(year, month, day, 12, 0, 0, 0, t.Location())
+	if t.After(midday){
+		midday = midday.Add(24 * time.Hour)
+	}
+
+	// get time after which daily claiming would be valid from db
+	var dailyTime time.Time
+	err := s.server.db.QueryRow("SELECT daily_time FROM characters WHERE id = $1", s.charID).Scan(&dailyTime)
+	if err != nil {
+		dailyTime = time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
+	}
+
+	if t.After(dailyTime){
+		// +6 netcafe points and setting next valid window
+		_, err := s.server.db.Exec("UPDATE characters SET daily_time=$1, netcafe_points=netcafe_points::int + 5 WHERE id=$2", midday, s.charID)
+		if err != nil {
+			s.logger.Fatal("Failed to update platedata savedata in db", zap.Error(err))
+		}
+		doAckBufSucceed(s, pkt.AckHandle, []byte{0x01, 0x00, 0x00, 0x00, 0x05, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x01})
+	} else {
+		doAckBufSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
+	}
 }
 
 func handleMsgMhfGetCogInfo(s *Session, p mhfpacket.MHFPacket) {}
@@ -1757,7 +1762,10 @@ func handleMsgMhfGetEtcPoints(s *Session, p mhfpacket.MHFPacket) {
 	doAckBufSucceed(s, pkt.AckHandle, resp.Data())
 }
 
-func handleMsgMhfUpdateEtcPoint(s *Session, p mhfpacket.MHFPacket) {}
+func handleMsgMhfUpdateEtcPoint(s *Session, p mhfpacket.MHFPacket) {
+	pkt := p.(*mhfpacket.MsgMhfUpdateEtcPoint)
+	doAckSimpleSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
+}
 
 func handleMsgMhfGetMyhouseInfo(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfGetMyhouseInfo)
@@ -1781,7 +1789,7 @@ func handleMsgMhfGetWeeklySchedule(s *Session, p mhfpacket.MHFPacket) {
 	//japanese timestamps as client needs to be in japanese locale
 	var t = time.Now().In(time.FixedZone("UTC+9", 9*60*60))
 	year, month, day := t.Date()
-	midnight := time.Date(year, month, day, 0, 0, 0, 0, t.Location()).Add(time.Hour)
+	midnight := time.Date(year, month, day, 0, 0, 0, 0, t.Location())
 	// ActiveFeatures is a bit field, 0x3FFF is all 14 active features.
 	// Long term it should probably be made persistent and simply cycle a couple daily
 	// Times seem to need to be midnight which is likely why matching timezone was required originally
@@ -1863,11 +1871,16 @@ func handleMsgMhfSavePlateData(s *Session, p mhfpacket.MHFPacket) {
 			s.logger.Fatal("Failed to get platedata savedata from db", zap.Error(err))
 		}
 
-		// Decompress
-		s.logger.Info("Decompressing...")
-		data, err = nullcomp.Decompress(data)
-		if err != nil {
-			s.logger.Fatal("Failed to decompress platedata from db", zap.Error(err))
+		if len(data) > 0 {
+			// Decompress
+			s.logger.Info("Decompressing...")
+			data, err = nullcomp.Decompress(data)
+			if err != nil {
+				s.logger.Fatal("Failed to decompress savedata from db", zap.Error(err))
+			}
+		} else {
+			// create empty save if absent
+			data = make([]byte, 0x1AF20)
 		}
 
 		// Perform diff and compress it to write back to db
@@ -2502,40 +2515,9 @@ func handleMsgMhfReceiveCafeDurationBonus(s *Session, p mhfpacket.MHFPacket) {}
 
 func handleMsgMhfPostCafeDurationBonusReceived(s *Session, p mhfpacket.MHFPacket) {}
 
-func handleMsgMhfGetGachaPoint(s *Session, p mhfpacket.MHFPacket) {
-	pkt := p.(*mhfpacket.MsgMhfGetGachaPoint)
-	// temp values from actual char, int32s for real gacha, trial gacha, frontier points
-	// presumably should be made persistent and into another database entry
-
-	resp := byteframe.NewByteFrame()
-	resp.WriteInt32(0)   // Real Gacha Points?
-	resp.WriteInt32(786) // Trial Gacha Point?
-	resp.WriteInt32(488) // Frontier Points?
-
-	doAckBufSucceed(s, pkt.AckHandle, resp.Data())
-}
-
-func handleMsgMhfUseGachaPoint(s *Session, p mhfpacket.MHFPacket) {}
-
-func handleMsgMhfExchangeFpoint2Item(s *Session, p mhfpacket.MHFPacket) {}
-
-func handleMsgMhfExchangeItem2Fpoint(s *Session, p mhfpacket.MHFPacket) {}
-
-func handleMsgMhfGetFpointExchangeList(s *Session, p mhfpacket.MHFPacket) {}
-
-func handleMsgMhfPlayStepupGacha(s *Session, p mhfpacket.MHFPacket) {}
-
-func handleMsgMhfReceiveGachaItem(s *Session, p mhfpacket.MHFPacket) {}
-
-func handleMsgMhfGetStepupStatus(s *Session, p mhfpacket.MHFPacket) {}
-
-func handleMsgMhfPlayFreeGacha(s *Session, p mhfpacket.MHFPacket) {}
-
 func handleMsgMhfGetTinyBin(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfGetTinyBin)
 	// requested after conquest quests
-	// 00 02 01 req returns 01 00 00 00 so using that as general placeholder
-	//s.QueueAck(pkt.AckHandle, []byte{0x01, 0x00, 0x00, 0x00})
 	doAckBufSucceed(s, pkt.AckHandle, []byte{})
 }
 
@@ -2555,12 +2537,6 @@ func handleMsgMhfPostBoostTimeQuestReturn(s *Session, p mhfpacket.MHFPacket) {
 	doAckSimpleSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
 }
 
-func handleMsgMhfGetBoxGachaInfo(s *Session, p mhfpacket.MHFPacket) {}
-
-func handleMsgMhfPlayBoxGacha(s *Session, p mhfpacket.MHFPacket) {}
-
-func handleMsgMhfResetBoxGachaInfo(s *Session, p mhfpacket.MHFPacket) {}
-
 func handleMsgMhfGetSeibattle(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfGetSeibattle)
 	stubGetNoResults(s, pkt.AckHandle)
@@ -2568,7 +2544,18 @@ func handleMsgMhfGetSeibattle(s *Session, p mhfpacket.MHFPacket) {
 
 func handleMsgMhfPostSeibattle(s *Session, p mhfpacket.MHFPacket) {}
 
-func handleMsgMhfGetRyoudama(s *Session, p mhfpacket.MHFPacket) {}
+func handleMsgMhfGetRyoudama(s *Session, p mhfpacket.MHFPacket) {
+pkt := p.(*mhfpacket.MsgMhfGetRyoudama)
+	// likely guild related
+	// REQ: 00 04 13 53 8F 18 00
+	// RSP: 0A 21 8E AD 00 00 00 00 00 00 00 00 00 00 00 01 00 01 FE 4E
+	// REQ: 00 06 13 53 8F 18 00
+	// RSP: 0A 21 8E AD 00 00 00 00 00 00 00 00 00 00 00 01 00 00 00 00 00 00 00 00
+	// REQ: 00 05 13 53 8F 18 00
+	// RSP: 0A 21 8E AD 00 00 00 00 00 00 00 00 00 00 00 0E 2A 15 9E CC 00 00 00 01 82 79 83 4E 83 8A 81 5B 83 69 00 00 00 00 1E 55 B0 2F 00 00 00 01 8D F7 00 00 00 00 00 00 00 00 00 00 00 00 2A 15 9E CC 00 00 00 02 82 79 83 4E 83 8A 81 5B 83 69 00 00 00 00 03 D5 30 56 00 00 00 02 95 BD 91 F2 97 42 00 00 00 00 00 00 00 00 3F 57 76 9F 00 00 00 03 93 56 92 6E 96 B3 97 70 00 00 00 00 00 00 38 D9 0E C4 00 00 00 03 87 64 83 78 83 42 00 00 00 00 00 00 00 00 23 F3 B9 77 00 00 00 04 82 B3 82 CC 82 DC 82 E9 81 99 00 00 00 00 3F 1B 17 9C 00 00 00 04 82 B1 82 A4 82 BD 00 00 00 00 00 00 00 00 00 B9 F9 C0 00 00 00 05 82 CD 82 E9 82 A9 00 00 00 00 00 00 00 00 23 9F 9A EA 00 00 00 05 83 70 83 62 83 4C 83 83 83 49 00 00 00 00 38 D9 0E C4 00 00 00 06 87 64 83 78 83 42 00 00 00 00 00 00 00 00 1E 55 B0 2F 00 00 00 06 8D F7 00 00 00 00 00 00 00 00 00 00 00 00 03 D5 30 56 00 00 00 07 95 BD 91 F2 97 42 00 00 00 00 00 00 00 00 02 D3 B8 77 00 00 00 07 6F 77 6C 32 35 32 35 00 00 00 00 00 00 00
+	data, _ := hex.DecodeString("0A218EAD0000000000000000000000010000000000000000")
+	doAckBufSucceed(s, pkt.AckHandle, data)
+}
 
 func handleMsgMhfPostRyoudama(s *Session, p mhfpacket.MHFPacket) {}
 
@@ -2594,15 +2581,12 @@ func handleMsgMhfGetTenrouirai(s *Session, p mhfpacket.MHFPacket) {
 
 func handleMsgMhfPostTenrouirai(s *Session, p mhfpacket.MHFPacket) {}
 
-func handleMsgMhfPlayNormalGacha(s *Session, p mhfpacket.MHFPacket) {}
-
 func handleMsgMhfGetDailyMissionMaster(s *Session, p mhfpacket.MHFPacket) {}
 
 func handleMsgMhfGetDailyMissionPersonal(s *Session, p mhfpacket.MHFPacket) {}
 
 func handleMsgMhfSetDailyMissionPersonal(s *Session, p mhfpacket.MHFPacket) {}
 
-func handleMsgMhfGetGachaPlayHistory(s *Session, p mhfpacket.MHFPacket) {}
 
 func handleMsgMhfGetCaAchievementHist(s *Session, p mhfpacket.MHFPacket) {}
 
@@ -2672,15 +2656,15 @@ func handleMsgMhfUseKeepLoginBoost(s *Session, p mhfpacket.MHFPacket) {
 	resp.WriteUint8(0)
 	// response is end timestamp based on input
 	if pkt.BoostWeekUsed == 1 {
-		resp.WriteUint32(uint32(t.Add(120 * time.Minute).Unix())) // Week 1 Timestamp, Festi start?
+		resp.WriteUint32(uint32(t.Add(120 * time.Minute).Unix()))
 	} else if pkt.BoostWeekUsed == 2 {
-		resp.WriteUint32(uint32(t.Add(240 * time.Minute).Unix())) // Week 1 Timestamp, Festi start?
+		resp.WriteUint32(uint32(t.Add(240 * time.Minute).Unix()))
 	} else if pkt.BoostWeekUsed == 3 {
-		resp.WriteUint32(uint32(t.Add(120 * time.Minute).Unix())) // Week 1 Timestamp, Festi start?
+		resp.WriteUint32(uint32(t.Add(120 * time.Minute).Unix()))
 	} else if pkt.BoostWeekUsed == 4 {
-		resp.WriteUint32(uint32(t.Add(180 * time.Hour).Unix())) // Week 1 Timestamp, Festi start?
+		resp.WriteUint32(uint32(t.Add(180 * time.Hour).Unix()))
 	} else if pkt.BoostWeekUsed == 5 {
-		resp.WriteUint32(uint32(t.Add(240 * time.Hour).Unix())) // Week 1 Timestamp, Festi start?
+		resp.WriteUint32(uint32(t.Add(240 * time.Hour).Unix()))
 	}
 	doAckBufSucceed(s, pkt.AckHandle, resp.Data())
 }
@@ -2689,7 +2673,7 @@ func handleMsgMhfGetUdSchedule(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfGetUdSchedule)
 	var t = time.Now().In(time.FixedZone("UTC+9", 9*60*60))
 	year, month, day := t.Date()
-	midnight := time.Date(year, month, day, 0, 0, 0, 0, t.Location()).Add(time.Hour)
+	midnight := time.Date(year, month, day, 0, 0, 0, 0, t.Location())
 	// Events with time limits are Festival with Sign up, Soul Week and Winners Weeks
 	// Diva Defense with Prayer, Interception and Song weeks
 	// Mezeporta Festival with simply 'available' being a weekend thing
@@ -2698,13 +2682,13 @@ func handleMsgMhfGetUdSchedule(s *Session, p mhfpacket.MHFPacket) {
 	resp.WriteUint32(uint32(midnight.Add(-24 * 21 * time.Hour).Unix())) // Week 1 Timestamp, Festi start?
 	resp.WriteUint32(uint32(midnight.Add(-24 * 14 * time.Hour).Unix())) // Week 2 Timestamp
 	resp.WriteUint32(uint32(midnight.Add(-24 * 14 * time.Hour).Unix())) // Week 2 Timestamp
-	resp.WriteUint32(uint32(midnight.Add(24 * 7 * time.Hour).Unix()))   // Diva Defense Interception
-	resp.WriteUint32(uint32(midnight.Add(24 * 7 * time.Hour).Unix()))   // Diva Defense Interception
-	resp.WriteUint32(uint32(midnight.Add(24 * 14 * time.Hour).Unix()))  // Diva Defense Greeting Song
-	resp.WriteUint16(0x19)                                              // Unk
-	resp.WriteUint16(0x2d)                                              // Unk
-	resp.WriteUint16(0x02)                                              // Unk
-	resp.WriteUint16(0x02)                                              // Unk
+	resp.WriteUint32(uint32(midnight.Add(-24 * 7 * time.Hour).Unix()))   // Diva Defense Interception
+	resp.WriteUint32(uint32(midnight.Add(-24 * 7 * time.Hour).Unix()))   // Diva Defense Interception
+	resp.WriteUint32(uint32(midnight.Add(-24 * 14 * time.Hour).Unix()))  // Diva Defense Greeting Song
+	resp.WriteUint16(0x19)                                              // Unk 00011001
+	resp.WriteUint16(0x2d)                                              // Unk 00101101
+	resp.WriteUint16(0x02)                                              // Unk 00000010
+	resp.WriteUint16(0x02)                                              // Unk 00000010
 
 	doAckBufSucceed(s, pkt.AckHandle, resp.Data())
 }
@@ -2995,12 +2979,50 @@ func handleMsgMhfGetEquipSkinHist(s *Session, p mhfpacket.MHFPacket) {
 	// presumably divided by 5 sections for 5120 armour IDs covered
 	// +10,000 for actual ID to be unlocked by each bit
 	// Returning 3200 bytes of FF just unlocks everything for now
-	doAckBufSucceed(s, pkt.AckHandle, bytes.Repeat([]byte{0xFF}, 0xC80))
+	var data []byte
+	err := s.server.db.QueryRow("SELECT COALESCE(skin_hist::bytea, $2::bytea) FROM characters WHERE id = $1", s.charID, make([]byte, 0xC80)).Scan(&data)
+	if err != nil {
+		s.logger.Fatal("Failed to get skin_hist savedata from db", zap.Error(err))
+	}
+	doAckBufSucceed(s, pkt.AckHandle, data)
 }
 
 func handleMsgMhfUpdateEquipSkinHist(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfUpdateEquipSkinHist)
 	// sends a raw armour ID back that needs to be mapped into the persistent bitmask above (-10,000)
+	var data []byte
+	err := s.server.db.QueryRow("SELECT COALESCE(skin_hist, $2) FROM characters WHERE id = $1", s.charID, make([]byte, 0xC80)).Scan(&data)
+	if err != nil {
+		s.logger.Fatal("Failed to get skin_hist from db", zap.Error(err))
+	}
+
+	var bit int
+	var startByte int
+	switch pkt.MogType {
+	case 0: // legs
+		bit = int(pkt.ArmourID) - 10000
+		startByte = 0
+	case 1:
+		bit = int(pkt.ArmourID) - 10000
+		startByte = 640
+	case 2:
+		bit = int(pkt.ArmourID) - 10000
+		startByte = 1280
+	case 3:
+		bit = int(pkt.ArmourID) - 10000
+		startByte = 1920
+	case 4:
+		bit = int(pkt.ArmourID) - 10000
+		startByte = 2560
+	}
+	// psql set_bit could also work but I couldn't get it working
+	byteInd := (bit / 8)
+	bitInByte := bit % 8
+	data[startByte + byteInd] |= bits.Reverse8((1 << uint(bitInByte)))
+	_, err = s.server.db.Exec("UPDATE characters SET skin_hist=$1 WHERE id=$2", data, s.charID)
+	if err != nil {
+		panic(err)
+	}
 	doAckSimpleSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
 }
 
@@ -3017,11 +3039,23 @@ func handleMsgMhfUseUdShopCoin(s *Session, p mhfpacket.MHFPacket) {}
 
 func handleMsgMhfGetEnhancedMinidata(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfGetEnhancedMinidata)
-	doAckBufSucceed(s, pkt.AckHandle, []byte{0x00})
+	// this looks to be the detailed chunk of information you can pull up on players in town
+	var data []byte
+	err := s.server.db.QueryRow("SELECT minidata FROM characters WHERE id = $1", pkt.CharID).Scan(&data)
+	if err != nil {
+		data = make([]byte, 0x400) // returning empty might avoid a client softlock
+		//s.logger.Fatal("Failed to get minidata from db", zap.Error(err))
+	}
+	doAckBufSucceed(s, pkt.AckHandle, data)
 }
 
 func handleMsgMhfSetEnhancedMinidata(s *Session, p mhfpacket.MHFPacket) {
-
+	pkt := p.(*mhfpacket.MsgMhfSetEnhancedMinidata)
+	_, err := s.server.db.Exec("UPDATE characters SET minidata=$1 WHERE id=$2", pkt.RawDataPayload, s.charID)
+	if err != nil {
+		s.logger.Fatal("Failed to update minidata in db", zap.Error(err))
+	}
+	doAckSimpleSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
 }
 
 func handleMsgMhfSexChanger(s *Session, p mhfpacket.MHFPacket) {}
@@ -3033,17 +3067,43 @@ func handleMsgSysReserve180(s *Session, p mhfpacket.MHFPacket) {}
 func handleMsgMhfGuildHuntdata(s *Session, p mhfpacket.MHFPacket) {}
 
 func handleMsgMhfAddKouryouPoint(s *Session, p mhfpacket.MHFPacket) {
+	// hunting with both ranks maxed gets you these
 	pkt := p.(*mhfpacket.MsgMhfAddKouryouPoint)
-	// Adds pkt.KouryouPoints to the value in get kouryou points, not sure if the actual value is saved for sending in MsgMhfGetKouryouPoint or in SaveData
-	doAckBufSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
+	var points int
+	err := s.server.db.QueryRow("UPDATE characters SET kouryou_point=COALESCE(kouryou_point + $1, $1) WHERE id=$2 RETURNING kouryou_point", pkt.KouryouPoints, s.charID).Scan(&points)
+	if err != nil {
+		s.logger.Fatal("Failed to update KouryouPoint in db", zap.Error(err))
+	}
+	resp := byteframe.NewByteFrame()
+	resp.WriteUint32(uint32(points))
+	doAckBufSucceed(s, pkt.AckHandle, resp.Data())
 }
 
 func handleMsgMhfGetKouryouPoint(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfGetKouryouPoint)
-	doAckBufSucceed(s, pkt.AckHandle, []byte{0x00, 0x02, 0x14, 0x3E})
+	var points int
+	err := s.server.db.QueryRow("SELECT COALESCE(kouryou_point, 0) FROM characters WHERE id = $1", s.charID).Scan(&points)
+	if err != nil {
+		s.logger.Fatal("Failed to get kouryou_point savedata from db", zap.Error(err))
+	}
+	resp := byteframe.NewByteFrame()
+	resp.WriteUint32(uint32(points))
+	doAckBufSucceed(s, pkt.AckHandle, resp.Data())
 }
 
-func handleMsgMhfExchangeKouryouPoint(s *Session, p mhfpacket.MHFPacket) {}
+func handleMsgMhfExchangeKouryouPoint(s *Session, p mhfpacket.MHFPacket) {
+	// spent at the guildmaster, 10000 a roll
+	var points int
+	pkt := p.(*mhfpacket.MsgMhfExchangeKouryouPoint)
+	err := s.server.db.QueryRow("UPDATE characters SET kouryou_point=kouryou_point - $1 WHERE id=$2 RETURNING kouryou_point", pkt.KouryouPoints, s.charID).Scan(&points)
+	if err != nil {
+		s.logger.Fatal("Failed to update platemyset savedata in db", zap.Error(err))
+	}
+	resp := byteframe.NewByteFrame()
+	resp.WriteUint32(uint32(points))
+	doAckBufSucceed(s, pkt.AckHandle, resp.Data())
+
+}
 
 func handleMsgMhfGetUdTacticsBonusQuest(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfGetUdTacticsBonusQuest)
@@ -3088,6 +3148,7 @@ func handleMsgMhfLoadPlateMyset(s *Session, p mhfpacket.MHFPacket) {
 func handleMsgMhfSavePlateMyset(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfSavePlateMyset)
 	// looks to always return the full thing, simply update database, no extra processing
+
 	_, err := s.server.db.Exec("UPDATE characters SET platemyset=$1 WHERE id=$2", pkt.RawDataPayload, s.charID)
 	if err != nil {
 		s.logger.Fatal("Failed to update platemyset savedata in db", zap.Error(err))
@@ -3136,6 +3197,8 @@ func handleMsgSysReserve193(s *Session, p mhfpacket.MHFPacket) {}
 func handleMsgSysReserve194(s *Session, p mhfpacket.MHFPacket) {}
 
 func handleMsgMhfSaveRengokuData(s *Session, p mhfpacket.MHFPacket) {
+	// saved every floor on road, holds values such as floors progressed, points etc.
+	// can be safely handled by the client
 	pkt := p.(*mhfpacket.MsgMhfSaveRengokuData)
 	_, err := s.server.db.Exec("UPDATE characters SET rengokudata=$1 WHERE id=$2", pkt.RawDataPayload, s.charID)
 	if err != nil {
@@ -3155,7 +3218,6 @@ func handleMsgMhfLoadRengokuData(s *Session, p mhfpacket.MHFPacket) {
 	if len(data) > 0 {
 		doAckBufSucceed(s, pkt.AckHandle, data)
 	} else {
-
 		resp := byteframe.NewByteFrame()
 		resp.WriteUint32(0)
 		resp.WriteUint32(0)
@@ -3164,6 +3226,7 @@ func handleMsgMhfLoadRengokuData(s *Session, p mhfpacket.MHFPacket) {
 		resp.WriteUint16(0)
 		resp.WriteUint16(0)
 		resp.WriteUint32(0)
+		resp.WriteUint32(0) // an extra 4 bytes were missing based on pcaps
 
 		resp.WriteUint8(3) // Count of next 3
 		resp.WriteUint16(0)
@@ -3217,12 +3280,6 @@ func handleMsgMhfGetRengokuRankingRank(s *Session, p mhfpacket.MHFPacket) {
 	resp.WriteBytes([]byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
 
 	doAckBufSucceed(s, pkt.AckHandle, resp.Data())
-}
-
-func handleMsgMhfAcquireExchangeShop(s *Session, p mhfpacket.MHFPacket) {
-	// writing out to an editable shop enumeration
-	pkt := p.(*mhfpacket.MsgMhfAcquireExchangeShop)
-	doAckSimpleSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
 }
 
 func handleMsgSysReserve19B(s *Session, p mhfpacket.MHFPacket) {}

@@ -8,8 +8,8 @@ import (
 // MsgMhfUpdateEquipSkinHist represents the MSG_MHF_UPDATE_EQUIP_SKIN_HIST
 type MsgMhfUpdateEquipSkinHist struct {
 	AckHandle uint32
-	Unk0      uint8
-	Unk1      uint16
+	MogType   uint8
+	ArmourID  uint16
 }
 
 // Opcode returns the ID associated with this packet type.
@@ -20,8 +20,8 @@ func (m *MsgMhfUpdateEquipSkinHist) Opcode() network.PacketID {
 // Parse parses the packet from binary
 func (m *MsgMhfUpdateEquipSkinHist) Parse(bf *byteframe.ByteFrame) error {
 	m.AckHandle = bf.ReadUint32()
-	m.Unk0 = bf.ReadUint8()
-	m.Unk1 = bf.ReadUint16()
+	m.MogType = bf.ReadUint8()
+	m.ArmourID = bf.ReadUint16()
 	return nil
 }
 

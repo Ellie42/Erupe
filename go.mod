@@ -24,6 +24,7 @@ require (
 	github.com/matterbridge/discordgo v0.18.0
 	github.com/mattn/go-sqlite3 v2.0.3+incompatible // indirect
 	github.com/nakagami/firebirdsql v0.0.0-20200209020130-035d0abf81c8 // indirect
+	github.com/sachaos/lottery v0.0.0-20180520074626-61949d99bd96
 	github.com/shopspring/decimal v0.0.0-20200226005030-a08b92da27ed // indirect
 	github.com/spf13/viper v1.6.1
 	github.com/xanzy/go-gitlab v0.26.0 // indirect
