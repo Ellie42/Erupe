@@ -6,7 +6,11 @@ import (
 )
 
 // MsgMhfReadMercenaryM represents the MSG_MHF_READ_MERCENARY_M
-type MsgMhfReadMercenaryM struct{}
+type MsgMhfReadMercenaryM struct{
+	AckHandle   uint32
+	CharID   uint32
+	Unk0        uint32
+}
 
 // Opcode returns the ID associated with this packet type.
 func (m *MsgMhfReadMercenaryM) Opcode() network.PacketID {
@@ -15,7 +19,10 @@ func (m *MsgMhfReadMercenaryM) Opcode() network.PacketID {
 
 // Parse parses the packet from binary
 func (m *MsgMhfReadMercenaryM) Parse(bf *byteframe.ByteFrame) error {
-	panic("Not implemented")
+	m.AckHandle = bf.ReadUint32()
+	m.CharID = bf.ReadUint32()
+	m.Unk0 = bf.ReadUint32()
+	return nil
 }
 
 // Build builds a binary packet from the current data.

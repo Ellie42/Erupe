@@ -6,7 +6,11 @@ import (
 )
 
 // MsgSysCheckSemaphore represents the MSG_SYS_CHECK_SEMAPHORE
-type MsgSysCheckSemaphore struct{}
+type MsgSysCheckSemaphore struct{
+	AckHandle uint32
+	DataSize uint8
+	DataBuf []byte
+}
 
 // Opcode returns the ID associated with this packet type.
 func (m *MsgSysCheckSemaphore) Opcode() network.PacketID {
@@ -15,7 +19,10 @@ func (m *MsgSysCheckSemaphore) Opcode() network.PacketID {
 
 // Parse parses the packet from binary
 func (m *MsgSysCheckSemaphore) Parse(bf *byteframe.ByteFrame) error {
-	panic("Not implemented")
+	m.AckHandle = bf.ReadUint32()
+	m.DataSize = bf.ReadUint8()
+	m.DataBuf = bf.ReadBytes(uint(m.DataSize))
+	return nil
 }
 
 // Build builds a binary packet from the current data.
