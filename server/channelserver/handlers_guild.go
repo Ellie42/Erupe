@@ -88,6 +88,10 @@ func handleMsgMhfOperateGuild(s *Session, p mhfpacket.MHFPacket) {
 		if err != nil {
 			return
 		}
+	case mhfpacket.OPERATE_GUILD_SET_AVOID_LEADERSHIP_TRUE:
+		handleAvoidLeadershipUpdate(s, pkt, true)
+	case mhfpacket.OPERATE_GUILD_SET_AVOID_LEADERSHIP_FALSE:
+		handleAvoidLeadershipUpdate(s, pkt, false)
 	case mhfpacket.OPERATE_GUILD_ACTION_UPDATE_COMMENT:
 		pbf := byteframe.NewByteFrameFromBytes(pkt.UnkData)
 
@@ -117,6 +121,26 @@ func handleMsgMhfOperateGuild(s *Session, p mhfpacket.MHFPacket) {
 	}
 
 	doAckSimpleSucceed(s, pkt.AckHandle, bf.Data())
+}
+
+func handleAvoidLeadershipUpdate(s *Session, pkt *mhfpacket.MsgMhfOperateGuild, avoidLeadership bool) {
+	characterGuildData, err := GetCharacterGuildData(s, s.charID)
+
+	if err != nil {
+		doAckSimpleFail(s, pkt.AckHandle, make([]byte, 4))
+		return
+	}
+
+	characterGuildData.AvoidLeadership = avoidLeadership
+
+	err = characterGuildData.Save(s)
+
+	if err != nil {
+		doAckSimpleFail(s, pkt.AckHandle, make([]byte, 4))
+		return
+	}
+
+	doAckSimpleSucceed(s, pkt.AckHandle, make([]byte, 4))
 }
 
 func handleOperateGuildActionDonate(s *Session, guild *Guild, pkt *mhfpacket.MsgMhfOperateGuild, bf *byteframe.ByteFrame) error {
@@ -202,7 +226,7 @@ func handleMsgMhfOperateGuildMember(s *Session, p mhfpacket.MHFPacket) {
 
 	character, err := GetCharacterGuildData(s, pkt.CharID)
 
-	if err != nil || character == nil || (!character.IsSubLeader && guild.LeaderCharID != s.charID) {
+	if err != nil || character == nil || (!character.IsSubLeader() && guild.LeaderCharID != s.charID) {
 		sendResponse(false)
 		return
 	}
@@ -275,7 +299,7 @@ func handleMsgMhfInfoGuild(s *Session, p mhfpacket.MHFPacket) {
 
 		if characterGuildData == nil || characterGuildData.IsApplicant {
 			bf.WriteUint16(0x00)
-		} else if characterGuildData.IsSubLeader || guild.LeaderCharID == s.charID {
+		} else if characterGuildData.IsSubLeader() || guild.LeaderCharID == s.charID {
 			bf.WriteUint16(0x01)
 		} else {
 			bf.WriteUint16(0x02)
@@ -511,14 +535,38 @@ func handleMsgMhfEnumerateGuildMember(s *Session, p mhfpacket.MHFPacket) {
 		return guildMembers[i].OrderIndex < guildMembers[j].OrderIndex
 	})
 
+	i := uint16(0)
+
+	test := []uint16{99, 3, 35, 51}
+
+	// 999 = HR7
+
 	for _, member := range guildMembers {
 		name := stringsupport.MustConvertUTF8ToShiftJIS(member.Name) + "\x00"
 
 		bf.WriteUint32(member.CharID)
-		bf.WriteBytes([]byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}) // Unk
-		bf.WriteUint16(member.OrderIndex)
+
+		// HR flags
+		// HR1
+		// 0 0 0 0  0 0 0 0   0 0 0 0  0 0 0 1
+		// HR2
+		// 0 0 0 0  0 0 0 0   0 0 0 0  0 0 1 1
+		// HR3
+		// 0 0 0 0  0 0 0 0   0 0 1 0  0 0 1 1
+		// HR4
+		// 0 0 0 0  0 0 0 0   0 1 1 0  0 0 1 1
+		// 0 0 0 0  0 0 0 0   0 0 1 1  0 0 1 1
+		// HR5
+		// 0 0 0 0  0 0 0 1   1 1 1 0  0 0 1 1
+
+		bf.WriteUint16(test[i]) // Rank flags
+		bf.WriteUint16(0x00)    // Grank
+		bf.WriteUint16(0x00)    // Unk
+		bf.WriteUint16(0x00)    // Hunter rank?
+		bf.WriteUint8(member.OrderIndex)
 		bf.WriteUint16(uint16(len(name)))
 		bf.WriteBytes([]byte(name))
+		i++
 	}
 
 	for _, member := range guildMembers {
