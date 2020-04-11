@@ -72,7 +72,9 @@ func (s *Session) makeSignInResp(uid int) []byte {
 		bf.WriteBytes(paddedString(char.Name, 16))          // Character name
 		bf.WriteBytes(paddedString(char.UnkDescString, 32)) // unk str
 		if char.GROverrideMode {
+			bf.SetLE()
 			bf.WriteUint16(char.GROverrideLevel) // GR level override.
+			bf.SetBE()
 			bf.WriteUint8(char.GROverrideUnk0)   // unk
 			bf.WriteUint8(char.GROverrideUnk1)   // unk
 		}

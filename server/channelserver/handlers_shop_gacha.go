@@ -1,7 +1,6 @@
 package channelserver
 
 import (
-	"fmt"
 	"time"
 
   "github.com/Andoryuuta/Erupe/common/stringsupport"
@@ -78,10 +77,12 @@ func handleMsgMhfEnumerateShop(s *Session, p mhfpacket.MHFPacket) {
 			}
 			entryCount++
 		}
-
+		if entryCount == 0{
+			doAckBufSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
+			return
+		}
 		resp.Seek(4, 0)
 		resp.WriteUint16(uint16(entryCount))
-		fmt.Printf("% x\nEntry Count:%d", resp.Data(), entryCount)
 		doAckBufSucceed(s, pkt.AckHandle, resp.Data())
 	} else if pkt.ShopType == 1 {
 		gachaCount := 0
@@ -167,6 +168,10 @@ func handleMsgMhfEnumerateShop(s *Session, p mhfpacket.MHFPacket) {
       resp.WriteUint16(weeklyFatalisKills)
       entryCount++
     }
+		if entryCount == 0{
+			doAckBufSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
+			return
+		}
     resp.Seek(0, 0)
     resp.WriteUint16(uint16(entryCount))
     resp.WriteUint16(uint16(entryCount))
@@ -183,7 +188,7 @@ func handleMsgMhfAcquireExchangeShop(s *Session, p mhfpacket.MHFPacket) {
     itemHash := bf.ReadUint32()
     buyCount := bf.ReadUint32()
     _, err := s.server.db.Exec(`INSERT INTO shop_item_state (char_id, itemhash, usedquantity)
-  														 VALUES ($1,$2,$3) ON CONFLICT (itemhash)
+  														 VALUES ($1,$2,$3) ON CONFLICT (char_id, itemhash)
   														 DO UPDATE SET usedquantity = shop_item_state.usedquantity + $3
   														 WHERE EXCLUDED.char_id=$1 AND EXCLUDED.itemhash=$2`, s.charID, itemHash, buyCount)
   	if err != nil {
@@ -530,7 +535,7 @@ func handleMsgMhfGetStepupStatus(s *Session, p mhfpacket.MHFPacket) {
 	// after midday or not set
 	if t.After(step_time) { step_progression = 0 }
 	_, err = s.server.db.Exec(`INSERT INTO stepup_state (shophash, step_progression, step_time, char_id)
-														 VALUES ($1,$2,$3,$4) ON CONFLICT (shophash)
+														 VALUES ($1,$2,$3,$4) ON CONFLICT (shophash, char_id)
 														 DO UPDATE SET step_progression=$2, step_time=$3
 														 WHERE EXCLUDED.char_id=$4 AND EXCLUDED.shophash=$1`, pkt.GachaHash, step_progression, midday, s.charID)
 	if err != nil {
@@ -643,7 +648,7 @@ func handleMsgMhfPlayBoxGacha(s *Session, p mhfpacket.MHFPacket) {
 	}
 	// update lucky_box_state
 	_, err = s.server.db.Exec(`INSERT INTO lucky_box_state (char_id, shophash, used_itemhash)
-														 VALUES ($1,$2,$3) ON CONFLICT (shophash)
+														 VALUES ($1,$2,$3) ON CONFLICT (char_id, shophash)
 														 DO UPDATE SET used_itemhash = COALESCE(lucky_box_state.used_itemhash::int[] || $3::int[], $3::int[])
 														 WHERE EXCLUDED.char_id=$1 AND EXCLUDED.shophash=$2`, s.charID, pkt.GachaHash, usedItemHash)
 	if err != nil {

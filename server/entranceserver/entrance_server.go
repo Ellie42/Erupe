@@ -111,9 +111,11 @@ func (s *Server) handleEntranceServerConnection(conn net.Conn) {
 
 	s.logger.Debug("Got entrance server command:\n", zap.String("raw", hex.Dump(pkt)))
 
-	data := makeResp(s.erupeConfig.Entrance.Entries)
+	data := makeSv2Resp(s.erupeConfig.Entrance.Entries)
+	if len(pkt) > 5 {
+		data = append(data, makeUsrResp(pkt)...)
+	}
 	cc.SendPacket(data)
-
 	// Close because we only need to send the response once.
 	// Any further requests from the client will come from a new connection.
 	conn.Close()
