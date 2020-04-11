@@ -6,7 +6,9 @@ import (
 )
 
 // MsgMhfEnumerateGuildItem represents the MSG_MHF_ENUMERATE_GUILD_ITEM
-type MsgMhfEnumerateGuildItem struct{}
+type MsgMhfEnumerateGuildItem struct {
+	AckHandle uint32
+}
 
 // Opcode returns the ID associated with this packet type.
 func (m *MsgMhfEnumerateGuildItem) Opcode() network.PacketID {
@@ -15,7 +17,9 @@ func (m *MsgMhfEnumerateGuildItem) Opcode() network.PacketID {
 
 // Parse parses the packet from binary
 func (m *MsgMhfEnumerateGuildItem) Parse(bf *byteframe.ByteFrame) error {
-	panic("Not implemented")
+	m.AckHandle = bf.ReadUint32()
+
+	return nil
 }
 
 // Build builds a binary packet from the current data.

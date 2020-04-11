@@ -2,6 +2,7 @@ package entranceserver
 
 import (
 	"encoding/binary"
+	"encoding/hex"
 	"github.com/Andoryuuta/Erupe/common/stringsupport"
 	"net"
 
@@ -49,6 +50,10 @@ func encodeServerInfo(serverInfos []config.EntranceServerInfo) []byte {
 			bf.WriteUint16(ci.Unk13)
 		}
 	}
+
+	decodeString, _ := hex.DecodeString("5DFA0EA90000003C3A131000FDBE9C33D3F354411EF1B4493D82CFE230B89E265DE05A32F9152E4EF1BE0FC7884478C1296270AF90A17B9FB62E7A646B316EA3F3E57560C4C71F1687A9B6D2A339335404B7E11BFF101B21B1DF55DAF5375F5D970CF58BD8E4293CF20C5D9B")
+
+	bf.WriteBytes(decodeString)
 
 	return bf.Data()
 }

@@ -714,3 +714,13 @@ func handleMsgMhfGetGuildTargetMemberNum(s *Session, p mhfpacket.MHFPacket) {
 
 	doAckBufSucceed(s, pkt.AckHandle, bf.Data())
 }
+
+func handleMsgMhfEnumerateGuildItem(s *Session, p mhfpacket.MHFPacket) {
+	pkt := p.(*mhfpacket.MsgMhfEnumerateGuildItem)
+
+	data, _ := hex.DecodeString("000100004cfa00010017000300000000")
+
+	doAckBufSucceed(s, pkt.AckHandle, data)
+}
+
+func handleMsgMhfUpdateGuildItem(s *Session, p mhfpacket.MHFPacket) {}

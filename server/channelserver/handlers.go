@@ -8,11 +8,11 @@ import (
 	"fmt"
 	"github.com/Andoryuuta/Erupe/common/stringsupport"
 	"io/ioutil"
+	"math/bits"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
-	"math/bits"
 
 	"github.com/Andoryuuta/Erupe/network/mhfpacket"
 	"github.com/Andoryuuta/Erupe/server/channelserver/compression/deltacomp"
@@ -359,7 +359,7 @@ func doStageTransfer(s *Session, ackHandle uint32, stageID string) {
 
 	// Notify existing stage clients that this new client has entered.
 	s.logger.Info("Sending MsgSysInsertUser")
-	if(s.stage != nil){ // avoids lock up when using bed for dream quests
+	if s.stage != nil { // avoids lock up when using bed for dream quests
 		s.stage.BroadcastMHF(&mhfpacket.MsgSysInsertUser{
 			CharID: s.charID,
 		}, s)
@@ -848,7 +848,7 @@ func handleMsgSysLockGlobalSema(s *Session, p mhfpacket.MHFPacket) {
 	// Unk
 	// 0x00 when no ID sent
 	// 0x02 when ID sent
-	bf.WriteUint8(0x00)
+	bf.WriteUint8(0x02)
 	bf.WriteUint8(0x00) // Unk
 
 	bf.WriteUint16(uint16(len(pkt.ServerChannelIDString)))
@@ -887,7 +887,7 @@ func handleMsgSysCreateObject(s *Session, p mhfpacket.MHFPacket) {
 		resp.WriteUint32(0) // Unk, is this echoed back from pkt.TargetCount?
 		resp.WriteUint32(1) // New local obj handle.
 		s.QueueAck(pkt.AckHandle, resp.Data())
-		return;
+		return
 		//s.logger.Fatal("StageID not in the stages map!", zap.String("stageID", s.stageID))
 	}
 
@@ -1157,6 +1157,25 @@ func dumpSaveData(s *Session, data []byte, suffix string) {
 
 func handleMsgMhfLoaddata(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfLoaddata)
+
+	overrideFile := filepath.Join(".", "bin", "save_override.bin")
+
+	if _, err := os.Stat(overrideFile); err == nil {
+		file, err := os.Open(overrideFile)
+
+		if err != nil {
+			panic(err)
+		}
+
+		data, err := ioutil.ReadAll(file)
+
+		if err != nil {
+			panic(err)
+		}
+
+		doAckBufSucceed(s, pkt.AckHandle, data)
+	}
+
 	var data []byte
 	err := s.server.db.QueryRow("SELECT savedata FROM characters WHERE id = $1", s.charID).Scan(&data)
 	if err != nil {
@@ -1437,10 +1456,6 @@ func handleMsgMhfAcquireTitle(s *Session, p mhfpacket.MHFPacket) {}
 
 func handleMsgMhfEnumerateTitle(s *Session, p mhfpacket.MHFPacket) {}
 
-func handleMsgMhfEnumerateGuildItem(s *Session, p mhfpacket.MHFPacket) {}
-
-func handleMsgMhfUpdateGuildItem(s *Session, p mhfpacket.MHFPacket) {}
-
 func handleMsgMhfEnumerateUnionItem(s *Session, p mhfpacket.MHFPacket) {}
 
 func handleMsgMhfUpdateUnionItem(s *Session, p mhfpacket.MHFPacket) {}
@@ -1523,7 +1538,7 @@ func handleMsgMhfCheckDailyCafepoint(s *Session, p mhfpacket.MHFPacket) {
 	var t = time.Now().In(time.FixedZone("UTC+9", 9*60*60))
 	year, month, day := t.Date()
 	midday := time.Date(year, month, day, 12, 0, 0, 0, t.Location())
-	if t.After(midday){
+	if t.After(midday) {
 		midday = midday.Add(24 * time.Hour)
 	}
 
@@ -1534,7 +1549,7 @@ func handleMsgMhfCheckDailyCafepoint(s *Session, p mhfpacket.MHFPacket) {
 		dailyTime = time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
 	}
 
-	if t.After(dailyTime){
+	if t.After(dailyTime) {
 		// +6 netcafe points and setting next valid window
 		_, err := s.server.db.Exec("UPDATE characters SET daily_time=$1, netcafe_points=netcafe_points::int + 5 WHERE id=$2", midday, s.charID)
 		if err != nil {
@@ -2131,19 +2146,11 @@ func handleMsgMhfSaveOtomoAirou(s *Session, p mhfpacket.MHFPacket) {
 	doAckSimpleSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
 }
 
-func handleMsgMhfEnumerateGuildTresure(s *Session, p mhfpacket.MHFPacket) {}
+func handleMsgMhfEnumerateAiroulist(s *Session, p mhfpacket.MHFPacket) {
+	pkt := p.(*mhfpacket.MsgMhfEnumerateAiroulist)
 
-func handleMsgMhfEnumerateAiroulist(s *Session, p mhfpacket.MHFPacket) {}
-
-func handleMsgMhfRegistGuildTresure(s *Session, p mhfpacket.MHFPacket) {}
-
-func handleMsgMhfAcquireGuildTresure(s *Session, p mhfpacket.MHFPacket) {}
-
-func handleMsgMhfOperateGuildTresureReport(s *Session, p mhfpacket.MHFPacket) {}
-
-func handleMsgMhfGetGuildTresureSouvenir(s *Session, p mhfpacket.MHFPacket) {}
-
-func handleMsgMhfAcquireGuildTresureSouvenir(s *Session, p mhfpacket.MHFPacket) {}
+	doAckBufSucceed(s, pkt.AckHandle, make([]byte, 6))
+}
 
 func handleMsgMhfEnumerateFestaIntermediatePrize(s *Session, p mhfpacket.MHFPacket) {}
 
@@ -2240,7 +2247,13 @@ func handleMsgMhfAcquireGuildAdventure(s *Session, p mhfpacket.MHFPacket) {}
 
 func handleMsgMhfChargeGuildAdventure(s *Session, p mhfpacket.MHFPacket) {}
 
-func handleMsgMhfLoadLegendDispatch(s *Session, p mhfpacket.MHFPacket) {}
+func handleMsgMhfLoadLegendDispatch(s *Session, p mhfpacket.MHFPacket) {
+	pkt := p.(*mhfpacket.MsgMhfLoadLegendDispatch)
+
+	data, _ := hex.DecodeString("03000000005df6f330000000005df844b0000000005df99630")
+
+	doAckBufSucceed(s, pkt.AckHandle, data)
+}
 
 func handleMsgMhfLoadHunterNavi(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfLoadHunterNavi)
@@ -2545,7 +2558,7 @@ func handleMsgMhfGetSeibattle(s *Session, p mhfpacket.MHFPacket) {
 func handleMsgMhfPostSeibattle(s *Session, p mhfpacket.MHFPacket) {}
 
 func handleMsgMhfGetRyoudama(s *Session, p mhfpacket.MHFPacket) {
-pkt := p.(*mhfpacket.MsgMhfGetRyoudama)
+	pkt := p.(*mhfpacket.MsgMhfGetRyoudama)
 	// likely guild related
 	// REQ: 00 04 13 53 8F 18 00
 	// RSP: 0A 21 8E AD 00 00 00 00 00 00 00 00 00 00 00 01 00 01 FE 4E
@@ -2586,7 +2599,6 @@ func handleMsgMhfGetDailyMissionMaster(s *Session, p mhfpacket.MHFPacket) {}
 func handleMsgMhfGetDailyMissionPersonal(s *Session, p mhfpacket.MHFPacket) {}
 
 func handleMsgMhfSetDailyMissionPersonal(s *Session, p mhfpacket.MHFPacket) {}
-
 
 func handleMsgMhfGetCaAchievementHist(s *Session, p mhfpacket.MHFPacket) {}
 
@@ -2682,9 +2694,9 @@ func handleMsgMhfGetUdSchedule(s *Session, p mhfpacket.MHFPacket) {
 	resp.WriteUint32(uint32(midnight.Add(-24 * 21 * time.Hour).Unix())) // Week 1 Timestamp, Festi start?
 	resp.WriteUint32(uint32(midnight.Add(-24 * 14 * time.Hour).Unix())) // Week 2 Timestamp
 	resp.WriteUint32(uint32(midnight.Add(-24 * 14 * time.Hour).Unix())) // Week 2 Timestamp
-	resp.WriteUint32(uint32(midnight.Add(-24 * 7 * time.Hour).Unix()))   // Diva Defense Interception
-	resp.WriteUint32(uint32(midnight.Add(-24 * 7 * time.Hour).Unix()))   // Diva Defense Interception
-	resp.WriteUint32(uint32(midnight.Add(-24 * 14 * time.Hour).Unix()))  // Diva Defense Greeting Song
+	resp.WriteUint32(uint32(midnight.Add(-24 * 7 * time.Hour).Unix()))  // Diva Defense Interception
+	resp.WriteUint32(uint32(midnight.Add(-24 * 7 * time.Hour).Unix()))  // Diva Defense Interception
+	resp.WriteUint32(uint32(midnight.Add(-24 * 14 * time.Hour).Unix())) // Diva Defense Greeting Song
 	resp.WriteUint16(0x19)                                              // Unk 00011001
 	resp.WriteUint16(0x2d)                                              // Unk 00101101
 	resp.WriteUint16(0x02)                                              // Unk 00000010
@@ -3018,7 +3030,7 @@ func handleMsgMhfUpdateEquipSkinHist(s *Session, p mhfpacket.MHFPacket) {
 	// psql set_bit could also work but I couldn't get it working
 	byteInd := (bit / 8)
 	bitInByte := bit % 8
-	data[startByte + byteInd] |= bits.Reverse8((1 << uint(bitInByte)))
+	data[startByte+byteInd] |= bits.Reverse8((1 << uint(bitInByte)))
 	_, err = s.server.db.Exec("UPDATE characters SET skin_hist=$1 WHERE id=$2", data, s.charID)
 	if err != nil {
 		panic(err)
