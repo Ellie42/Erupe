@@ -6,8 +6,10 @@ import (
 )
 
 // MsgMhfEnumerateGuildTresure represents the MSG_MHF_ENUMERATE_GUILD_TRESURE
-type MsgMhfEnumerateGuildTresure struct {
-	AckHandle uint32
+type MsgMhfEnumerateGuildTresure struct{
+	AckHandle      uint32
+	Unk0           uint16
+	Unk1			     uint32
 }
 
 // Opcode returns the ID associated with this packet type.
@@ -18,7 +20,8 @@ func (m *MsgMhfEnumerateGuildTresure) Opcode() network.PacketID {
 // Parse parses the packet from binary
 func (m *MsgMhfEnumerateGuildTresure) Parse(bf *byteframe.ByteFrame) error {
 	m.AckHandle = bf.ReadUint32()
-
+	m.Unk0 = bf.ReadUint16()
+	m.Unk1 = bf.ReadUint32()
 	return nil
 }
 

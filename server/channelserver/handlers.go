@@ -197,7 +197,7 @@ func handleMsgSysLogin(s *Session, p mhfpacket.MHFPacket) {
 	s.Unlock()
 
 	bf := byteframe.NewByteFrame()
-	bf.WriteUint32(uint32(time.Now().Unix())) // Unix timestamp
+	bf.WriteUint32(uint32(time.Now().In(time.FixedZone("UTC+9", 9*60*60)).Unix())) // Unix timestamp
 
 	doAckSimpleSucceed(s, pkt.AckHandle, bf.Data())
 }
@@ -309,6 +309,8 @@ func handleMsgSysIssueLogkey(s *Session, p mhfpacket.MHFPacket) {
 
 func handleMsgSysRecordLog(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgSysRecordLog)
+	// remove a client returning to town from reserved slots to make sure the stage is hidden from board
+	delete(s.stage.reservedClientSlots, s.charID)
 	doAckSimpleSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
 }
 
@@ -848,19 +850,21 @@ func handleMsgSysLockGlobalSema(s *Session, p mhfpacket.MHFPacket) {
 	// Unk
 	// 0x00 when no ID sent
 	// 0x02 when ID sent
-	bf.WriteUint8(0x02)
-	bf.WriteUint8(0x00) // Unk
-
-	bf.WriteUint16(uint16(len(pkt.ServerChannelIDString)))
-	bf.WriteBytes([]byte(pkt.ServerChannelIDString))
-
+	if pkt.ServerChannelIDLength == 1 {
+		bf.WriteBytes([]byte{0x00, 0x00, 0x00, 0x01, 0x00})
+	} else {
+		bf.WriteUint8(0x02)
+		bf.WriteUint8(0x00) // Unk
+		bf.WriteUint16(uint16(pkt.ServerChannelIDLength))
+		bf.WriteBytes([]byte(pkt.ServerChannelIDString))
+	}
 	doAckBufSucceed(s, pkt.AckHandle, bf.Data())
 }
 
 func handleMsgSysUnlockGlobalSema(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgSysUnlockGlobalSema)
 
-	doAckSimpleSucceed(s, pkt.AckHandle, make([]byte, 4))
+	doAckSimpleSucceed(s, pkt.AckHandle, make([]byte, 8))
 }
 
 func handleMsgSysCheckSemaphore(s *Session, p mhfpacket.MHFPacket) {}
@@ -1523,8 +1527,9 @@ func handleMsgMhfUpdateCafepoint(s *Session, p mhfpacket.MHFPacket) {
 		s.logger.Fatal("Failed to get plate data savedata from db", zap.Error(err))
 	}
 	resp := byteframe.NewByteFrame()
+	resp.WriteUint32(0)
 	resp.WriteUint32(uint32(netcafe_points))
-	doAckBufSucceed(s, pkt.AckHandle, resp.Data())
+	doAckSimpleSucceed(s, pkt.AckHandle, resp.Data())
 }
 
 func handleMsgMhfCheckDailyCafepoint(s *Session, p mhfpacket.MHFPacket) {
@@ -1779,7 +1784,7 @@ func handleMsgMhfGetEtcPoints(s *Session, p mhfpacket.MHFPacket) {
 
 func handleMsgMhfUpdateEtcPoint(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfUpdateEtcPoint)
-	doAckSimpleSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
+	doAckSimpleSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
 }
 
 func handleMsgMhfGetMyhouseInfo(s *Session, p mhfpacket.MHFPacket) {
@@ -2235,11 +2240,34 @@ func handleMsgMhfSaveDecoMyset(s *Session, p mhfpacket.MHFPacket) {
 
 func handleMsgMhfReserve010F(s *Session, p mhfpacket.MHFPacket) {}
 
-func handleMsgMhfLoadGuildCooking(s *Session, p mhfpacket.MHFPacket) {}
+func handleMsgMhfLoadGuildCooking(s *Session, p mhfpacket.MHFPacket) {
+	pkt := p.(*mhfpacket.MsgMhfLoadGuildCooking)
+	// MealData
+	// uint16 meal count
+	// Meal
+	// uint32 hash?
+	// uint32 unk
+	// uint32 success level
+	// uint32 expiration timestamp
 
-func handleMsgMhfRegistGuildCooking(s *Session, p mhfpacket.MHFPacket) {}
+	// encourage food
+	data := []byte{0x00, 0x01, 0x0F, 0x51, 0x97, 0xFF, 0x00, 0x00, 0x02, 0xC4, 0x00, 0x00, 0x00, 0x03, 0x5F, 0xFC, 0x0B, 0x51}
+	doAckBufSucceed(s, pkt.AckHandle, data)
 
-func handleMsgMhfLoadGuildAdventure(s *Session, p mhfpacket.MHFPacket) {}
+	//data := []byte{0x00, 0x01, 0x1C, 0x72, 0x54, 0x15, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x5F, 0xF8, 0x2F, 0xE1}
+	//doAckBufSucceed(s, pkt.AckHandle, data)
+}
+
+func handleMsgMhfRegistGuildCooking(s *Session, p mhfpacket.MHFPacket) {
+		pkt := p.(*mhfpacket.MsgMhfRegistGuildCooking)
+		doAckSimpleSucceed(s, pkt.AckHandle, []byte{0x01, 0x00})
+}
+
+func handleMsgMhfLoadGuildAdventure(s *Session, p mhfpacket.MHFPacket) {
+	pkt := p.(*mhfpacket.MsgMhfLoadGuildAdventure)
+	data := []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
+	doAckBufSucceed(s, pkt.AckHandle, data)
+}
 
 func handleMsgMhfRegistGuildAdventure(s *Session, p mhfpacket.MHFPacket) {}
 
@@ -2249,9 +2277,7 @@ func handleMsgMhfChargeGuildAdventure(s *Session, p mhfpacket.MHFPacket) {}
 
 func handleMsgMhfLoadLegendDispatch(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfLoadLegendDispatch)
-
-	data, _ := hex.DecodeString("03000000005df6f330000000005df844b0000000005df99630")
-
+	data := []byte{0x03, 0x00, 0x00, 0x00, 0x00, 0x5e, 0x01, 0x8d, 0x40, 0x00, 0x00, 0x00, 0x00, 0x5e, 0x02, 0xde, 0xc0, 0x00, 0x00, 0x00, 0x00, 0x5e, 0x04, 0x30, 0x40}
 	doAckBufSucceed(s, pkt.AckHandle, data)
 }
 
@@ -2592,7 +2618,10 @@ func handleMsgMhfGetTenrouirai(s *Session, p mhfpacket.MHFPacket) {
 
 }
 
-func handleMsgMhfPostTenrouirai(s *Session, p mhfpacket.MHFPacket) {}
+func handleMsgMhfPostTenrouirai(s *Session, p mhfpacket.MHFPacket) {
+		pkt := p.(*mhfpacket.MsgMhfPostTenrouirai)
+		doAckSimpleSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
+}
 
 func handleMsgMhfGetDailyMissionMaster(s *Session, p mhfpacket.MHFPacket) {}
 
@@ -2607,53 +2636,79 @@ func handleMsgMhfSetCaAchievementHist(s *Session, p mhfpacket.MHFPacket) {
 	doAckSimpleSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
 }
 
+type loginBoost struct{
+		WeeekReq, WeekCount uint8
+		Available bool
+		Expiration uint32
+}
+
 func handleMsgMhfGetKeepLoginBoostStatus(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfGetKeepLoginBoostStatus)
 
 	//var t = time.Now().In(time.FixedZone("UTC+9", 9*60*60)) // uncomment to enable permanently
 	// Directly interacts with MsgMhfUseKeepLoginBoost
-	// TODO: make these states persistent on a per character basis
-	loginBoostStatus := [5]struct {
-		WeeekReq, WeekCount, Available uint8
-		Expiration                     uint32
-	}{
-		{
-			WeeekReq:   1, // weeks needed to unlock
-			WeekCount:  1, // weeks passed
-			Available:  1, // available
-			Expiration: 0, //uint32(t.Add(120 * time.Minute).Unix()), // uncomment to enable permanently
-		},
-		{
-			WeeekReq:   2,
-			WeekCount:  0,
-			Available:  1,
-			Expiration: 0,
-		},
-		{
-			WeeekReq:   3,
-			WeekCount:  0,
-			Available:  1,
-			Expiration: 0,
-		},
-		{
-			WeeekReq:   4,
-			WeekCount:  0,
-			Available:  1,
-			Expiration: 0,
-		},
-		{
-			WeeekReq:   5,
-			WeekCount:  0,
-			Available:  1,
-			Expiration: 0,
-		},
-	}
 
+	var loginBoostStatus []loginBoost
+	insert := false
+	boostState, err := s.server.db.Query("SELECT week_req, week_count, available, end_time FROM login_boost_state WHERE char_id=$1 ORDER BY week_req ASC", s.charID)
+	if err != nil {
+		panic(err)
+	}
+	for boostState.Next() {
+		var boost loginBoost
+		err = boostState.Scan(&boost.WeeekReq, &boost.WeekCount, &boost.Available, &boost.Expiration)
+		if err != nil {
+			panic(err)
+		}
+		loginBoostStatus = append(loginBoostStatus, boost)
+	}
+	if len(loginBoostStatus) == 0 {
+		// create default Entries (should only been week 1 with )
+		insert = true
+		loginBoostStatus = []loginBoost {
+			{
+				WeeekReq:   1, // weeks needed
+				WeekCount:  1, // weeks passed
+				Available:  true, // available
+				Expiration: 0, //uint32(t.Add(120 * time.Minute).Unix()), // uncomment to enable permanently
+			},
+			{
+				WeeekReq:   2,
+				WeekCount:  2,
+				Available:  true,
+				Expiration: 0,
+			},
+			{
+				WeeekReq:   3,
+				WeekCount:  3,
+				Available:  true,
+				Expiration: 0,
+			},
+			{
+				WeeekReq:   4,
+				WeekCount:  4,
+				Available:  true,
+				Expiration: 0,
+			},
+			{
+				WeeekReq:   5,
+				WeekCount:  5,
+				Available:  true,
+				Expiration: 0,
+			},
+		}
+	}
 	resp := byteframe.NewByteFrame()
 	for _, v := range loginBoostStatus {
+		if insert {
+			_, err := s.server.db.Exec(`INSERT INTO login_boost_state (char_id, week_req, week_count, available, end_time) VALUES ($1,$2,$3,$4,$5)`, s.charID, v.WeeekReq, v.WeekCount, v.Available, v.Expiration)
+			if err != nil {
+				panic(err)
+			}
+		}
 		resp.WriteUint8(v.WeeekReq)
 		resp.WriteUint8(v.WeekCount)
-		resp.WriteUint8(v.Available)
+		resp.WriteBool(v.Available)
 		resp.WriteUint32(v.Expiration)
 	}
 	doAckBufSucceed(s, pkt.AckHandle, resp.Data())
@@ -2667,16 +2722,28 @@ func handleMsgMhfUseKeepLoginBoost(s *Session, p mhfpacket.MHFPacket) {
 	resp := byteframe.NewByteFrame()
 	resp.WriteUint8(0)
 	// response is end timestamp based on input
-	if pkt.BoostWeekUsed == 1 {
-		resp.WriteUint32(uint32(t.Add(120 * time.Minute).Unix()))
-	} else if pkt.BoostWeekUsed == 2 {
-		resp.WriteUint32(uint32(t.Add(240 * time.Minute).Unix()))
-	} else if pkt.BoostWeekUsed == 3 {
-		resp.WriteUint32(uint32(t.Add(120 * time.Minute).Unix()))
-	} else if pkt.BoostWeekUsed == 4 {
-		resp.WriteUint32(uint32(t.Add(180 * time.Hour).Unix()))
-	} else if pkt.BoostWeekUsed == 5 {
-		resp.WriteUint32(uint32(t.Add(240 * time.Hour).Unix()))
+	switch pkt.BoostWeekUsed {
+		case 1:
+			t = t.Add(120 * time.Minute)
+			resp.WriteUint32(uint32(t.Unix()))
+		case 2:
+			t = t.Add(240 * time.Minute)
+			resp.WriteUint32(uint32(t.Unix()))
+		case 3:
+			t = t.Add(120 * time.Minute)
+			resp.WriteUint32(uint32(t.Unix()))
+		case 4:
+			t = t.Add(180 * time.Minute)
+			resp.WriteUint32(uint32(t.Unix()))
+		case 5:
+			t = t.Add(240 * time.Minute)
+			resp.WriteUint32(uint32(t.Unix()))
+	}
+	_, err := s.server.db.Exec(`UPDATE login_boost_state
+															SET available='false', end_time=$1
+															WHERE char_id=$2 AND week_req=$3`, uint32(t.Unix()), s.charID, pkt.BoostWeekUsed)
+	if err != nil {
+		panic(err)
 	}
 	doAckBufSucceed(s, pkt.AckHandle, resp.Data())
 }
@@ -3076,7 +3143,11 @@ func handleMsgMhfGetLobbyCrowd(s *Session, p mhfpacket.MHFPacket) {}
 
 func handleMsgSysReserve180(s *Session, p mhfpacket.MHFPacket) {}
 
-func handleMsgMhfGuildHuntdata(s *Session, p mhfpacket.MHFPacket) {}
+func handleMsgMhfGuildHuntdata(s *Session, p mhfpacket.MHFPacket) {
+	pkt := p.(*mhfpacket.MsgMhfGuildHuntdata)
+	data := []byte{0x01, 0xFE}
+	doAckBufSucceed(s, pkt.AckHandle, data)
+}
 
 func handleMsgMhfAddKouryouPoint(s *Session, p mhfpacket.MHFPacket) {
 	// hunting with both ranks maxed gets you these

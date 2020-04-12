@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"github.com/Andoryuuta/Erupe/common/stringsupport"
 	"net"
+	"time"
 
 	"github.com/Andoryuuta/Erupe/config"
 	"github.com/Andoryuuta/byteframe"
@@ -50,11 +51,8 @@ func encodeServerInfo(serverInfos []config.EntranceServerInfo) []byte {
 			bf.WriteUint16(ci.Unk13)
 		}
 	}
-
-	decodeString, _ := hex.DecodeString("5DFA0EA90000003C3A131000FDBE9C33D3F354411EF1B4493D82CFE230B89E265DE05A32F9152E4EF1BE0FC7884478C1296270AF90A17B9FB62E7A646B316EA3F3E57560C4C71F1687A9B6D2A339335404B7E11BFF101B21B1DF55DAF5375F5D970CF58BD8E4293CF20C5D9B")
-
-	bf.WriteBytes(decodeString)
-
+	bf.WriteUint32(uint32(time.Now().In(time.FixedZone("UTC+9", 9*60*60)).Unix()))
+	bf.WriteUint32(0x0000003C)
 	return bf.Data()
 }
 
@@ -76,17 +74,33 @@ func makeHeader(data []byte, respType string, entryCount uint16, key byte) []byt
 	return bf.Data()
 }
 
-func makeResp(servers []config.EntranceServerInfo) []byte {
+func makeSv2Resp(servers []config.EntranceServerInfo) []byte {
 	rawServerData := encodeServerInfo(servers)
-
 	bf := byteframe.NewByteFrame()
 	bf.WriteBytes(makeHeader(rawServerData, "SV2", uint16(len(servers)), 0x00))
+	return bf.Data()
 
+}
+
+
+func makeUsrResp(pkt []byte) []byte {
 	// TODO(Andoryuuta): Figure out what this user data is.
 	// Is it for the friends list at the world selection screen?
 	// If so, how does it work without the entrance server connection being authenticated?
-	bf.WriteBytes(makeHeader([]byte{}, "USR", 0, 0x00))
 
-	return bf.Data()
+	// uint16 for number of requested ids
+	// uint32 for each id
+	// response seems to be server number starting from 10 10 00 00 for server 1 channel 1?
+	bf := byteframe.NewByteFrameFromBytes(pkt)
+	_ = bf.ReadUint32() // ALL+
+	_ = bf.ReadUint8() // 0x00
+
+	userEntries := bf.ReadUint16()
+	// actual process will be reading all ids and returning real server, just returning all in server 1 for now
+	bf = byteframe.NewByteFrame()
+	for i := 0; i < int(userEntries); i++{
+		bf.WriteBytes([]byte{0x10, 0x10, 0x00, 0x00})
+	}
+	return makeHeader(bf.Data(), "USR", userEntries, 0x00)
 
 }
