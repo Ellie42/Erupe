@@ -17,6 +17,7 @@ type GuildMember struct {
 	LastLogin       uint32    `db:"last_login"`
 	AvoidLeadership bool      `db:"avoid_leadership"`
 	IsLeader        bool      `db:"is_leader"`
+	Exp             uint16    `db:"exp"`
 }
 
 func (gm *GuildMember) IsSubLeader() bool {
@@ -45,7 +46,7 @@ func (gm *GuildMember) Save(s *Session) error {
 
 func GetGuildMembers(s *Session, guildID uint32, applicants bool) ([]*GuildMember, error) {
 	rows, err := s.server.db.Queryx(`
-		SELECT guild_id, joined_at, c.name, gc.character_id, gc.is_applicant, gc.order_index, c.last_login, gc.avoid_leadership, 
+		SELECT guild_id, joined_at, c.name, gc.character_id, gc.is_applicant, gc.order_index, c.last_login, gc.avoid_leadership, c.exp,
 			CASE WHEN g.leader_id = c.id THEN 1 ELSE 0 END as is_leader
 			FROM guild_characters gc
 				JOIN characters c on gc.character_id = c.id
@@ -77,7 +78,7 @@ func GetGuildMembers(s *Session, guildID uint32, applicants bool) ([]*GuildMembe
 
 func GetCharacterGuildData(s *Session, charID uint32) (*GuildMember, error) {
 	rows, err := s.server.db.Queryx(`
-		SELECT guild_id, joined_at, c.name, character_id, gc.is_applicant, gc.avoid_leadership, gc.order_index, c.last_login,
+		SELECT guild_id, joined_at, c.name, character_id, gc.is_applicant, gc.avoid_leadership, gc.order_index, c.last_login, c.exp,
 			CASE WHEN g.leader_id = c.id THEN 1 ELSE 0 END as is_leader
 			FROM guild_characters gc
 				JOIN characters c on gc.character_id = c.id
