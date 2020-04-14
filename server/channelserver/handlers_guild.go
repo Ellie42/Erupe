@@ -567,38 +567,19 @@ func handleMsgMhfEnumerateGuildMember(s *Session, p mhfpacket.MHFPacket) {
 		return guildMembers[i].OrderIndex < guildMembers[j].OrderIndex
 	})
 
-	//i := uint16(0)
-
-	//test := []uint16{99, 3, 35, 51}
-
-	// 999 = HR7
-
 	for _, member := range guildMembers {
 		name := stringsupport.MustConvertUTF8ToShiftJIS(member.Name) + "\x00"
 
 		bf.WriteUint32(member.CharID)
 
-		// HR flags
-		// HR1
-		// 0 0 0 0  0 0 0 0   0 0 0 0  0 0 0 1
-		// HR2
-		// 0 0 0 0  0 0 0 0   0 0 0 0  0 0 1 1
-		// HR3
-		// 0 0 0 0  0 0 0 0   0 0 1 0  0 0 1 1
-		// HR4
-		// 0 0 0 0  0 0 0 0   0 1 1 0  0 0 1 1
-		// 0 0 0 0  0 0 0 0   0 0 1 1  0 0 1 1
-		// HR5
-		// 0 0 0 0  0 0 0 1   1 1 1 0  0 0 1 1
-
-		bf.WriteUint16(0x01) // Rank flags
-		bf.WriteUint16(0x00) // Grank
-		bf.WriteUint16(0x00) // Unk
-		bf.WriteUint16(0x00) // Hunter rank?
+		// Exp, HR[x] is split by 0, 1, 30, 50, 99, 299, 998, 999
+		bf.WriteUint16(member.Exp) // Rank flags
+		bf.WriteUint16(0x00)       // Grank
+		bf.WriteUint16(0x00)       // Unk
+		bf.WriteUint16(0x00)       // Some rank?
 		bf.WriteUint8(member.OrderIndex)
 		bf.WriteUint16(uint16(len(name)))
 		bf.WriteBytes([]byte(name))
-		//i++
 	}
 
 	for _, member := range guildMembers {
