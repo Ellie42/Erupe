@@ -93,6 +93,13 @@ func handleMsgMhfOperateGuild(s *Session, p mhfpacket.MHFPacket) {
 	case mhfpacket.OPERATE_GUILD_SET_AVOID_LEADERSHIP_FALSE:
 		handleAvoidLeadershipUpdate(s, pkt, false)
 	case mhfpacket.OPERATE_GUILD_ACTION_UPDATE_COMMENT:
+		characterGuildInfo, err := GetCharacterGuildData(s, s.charID)
+
+		if err != nil || (!characterGuildInfo.IsLeader && !characterGuildInfo.IsSubLeader()) {
+			doAckSimpleFail(s, pkt.AckHandle, make([]byte, 4))
+			return
+		}
+
 		pbf := byteframe.NewByteFrameFromBytes(pkt.UnkData)
 
 		mottoLength := pbf.ReadUint8()
@@ -103,12 +110,12 @@ func handleMsgMhfOperateGuild(s *Session, p mhfpacket.MHFPacket) {
 		)
 
 		if err != nil {
-			s.logger.Warn("failed to convert guild motto to UTF8", zap.Error(err))
+			s.logger.Warn("failed to convert guild comment to UTF8", zap.Error(err))
 			doAckSimpleFail(s, pkt.AckHandle, make([]byte, 4))
 			break
 		}
 
-		err := guild.Save(s)
+		err = guild.Save(s)
 
 		if err != nil {
 			doAckSimpleFail(s, pkt.AckHandle, make([]byte, 4))
@@ -324,8 +331,6 @@ func handleMsgMhfInfoGuild(s *Session, p mhfpacket.MHFPacket) {
 		//bf.WriteBytes([]byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x02, 0x00, 0x00, 0x00, 0x00}) // Unk
 		bf.WriteBytes([]byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x02, 0x02, 0x00, 0x00, 0x18, 0xBD}) // Level 17 guild's version
 
-		// Here there are always 3 null terminated names, not sure what they relate to though
-		// Having all three as null bytes is perfectly valid
 		// Pugi's names, probably expected as null until you have them with levels? Null gives them a default japanese name
 		for i := 0; i < 3; i++ {
 			bf.WriteUint8(0x1) // Name Length - 1 minimum due to null byte
@@ -391,15 +396,33 @@ func handleMsgMhfInfoGuild(s *Session, p mhfpacket.MHFPacket) {
 			bf.WriteBytes([]byte(applicantName))
 		}
 
-		// There can be some more bytes here but I cannot make sense of them right now.
+		// This is guild icon data
 		// temp canned bytes to avoid crashing when a guild has more than 1-2 members and a guild hall
-		bf.WriteBytes([]byte{0x00, 0x05, 0x00, 0x03, 0x00, 0x38, 0x01, 0x00, 0x01, 0xFF, 0xFF, 0xFF, 0x00, 0x04, 0x00, 0x03,
-			0x00, 0x02, 0x00, 0x38, 0x01, 0x00, 0x03, 0xFF, 0xFF, 0xFF, 0x00, 0x69, 0x00, 0x60, 0x00, 0x01,
-			0x00, 0x38, 0x01, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0x00, 0x6A, 0x00, 0x03, 0x00, 0x00, 0x00, 0x38,
-			0x01, 0x00, 0x02, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x63, 0x00, 0x06, 0x00, 0x35, 0x01, 0x03,
-			0x00, 0xFF, 0xFF, 0xFF, 0x00, 0x11, 0x00, 0x01, 0x00,
-		})
-		//bf.WriteBytes([]byte{0x01, 0x01, 0x00, 0x00})
+		//bf.WriteBytes([]byte{0x00, 0x05, 0x00, 0x03, 0x00, 0x38, 0x01, 0x00, 0x01, 0xFF, 0xFF, 0xFF, 0x00, 0x04, 0x00, 0x03,
+		//	0x00, 0x02, 0x00, 0x38, 0x01, 0x00, 0x03, 0xFF, 0xFF, 0xFF, 0x00, 0x69, 0x00, 0x60, 0x00, 0x01,
+		//	0x00, 0x38, 0x01, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0x00, 0x6A, 0x00, 0x03, 0x00, 0x00, 0x00, 0x38,
+		//	0x01, 0x00, 0x02, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x63, 0x00, 0x06, 0x00, 0x35, 0x01, 0x03,
+		//	0x00, 0xFF, 0xFF, 0xFF, 0x00, 0x11, 0x00, 0x01, 0x00,
+		//})
+
+		// Unk bool? if true +3 bytes after this
+		bf.WriteUint8(0x00)
+
+		if guild.Icon != nil {
+			bf.WriteUint16(uint16(len(guild.Icon.Parts)))
+
+			for _, p := range guild.Icon.Parts {
+				bf.WriteUint16(p.Index)
+				bf.WriteUint16(p.ID)
+				bf.WriteUint8(0x01)
+				bf.WriteUint8(p.Size)
+				bf.WriteUint8(p.Rotation)
+				bf.WriteUint8(0xFF)
+				bf.WriteUint16(0xFFFF)
+				bf.WriteUint16(p.PosX)
+				bf.WriteUint16(p.PosY)
+			}
+		}
 
 		doAckBufSucceed(s, pkt.AckHandle, bf.Data())
 	} else {
@@ -733,3 +756,55 @@ func handleMsgMhfEnumerateGuildItem(s *Session, p mhfpacket.MHFPacket) {
 }
 
 func handleMsgMhfUpdateGuildItem(s *Session, p mhfpacket.MHFPacket) {}
+
+func handleMsgMhfUpdateGuildIcon(s *Session, p mhfpacket.MHFPacket) {
+	pkt := p.(*mhfpacket.MsgMhfUpdateGuildIcon)
+
+	guild, err := GetGuildInfoByID(s, pkt.GuildID)
+
+	if err != nil {
+		panic(err)
+	}
+
+	characterInfo, err := GetCharacterGuildData(s, s.charID)
+
+	if err != nil {
+		panic(err)
+	}
+
+	if !characterInfo.IsSubLeader() && !characterInfo.IsLeader {
+		s.logger.Warn(
+			"character without leadership attempting to update guild icon",
+			zap.Uint32("guildID", guild.ID),
+			zap.Uint32("charID", s.charID),
+		)
+		doAckSimpleFail(s, pkt.AckHandle, make([]byte, 4))
+		return
+	}
+
+	icon := &GuildIcon{}
+
+	icon.Parts = make([]GuildIconPart, pkt.PartCount)
+
+	for i, p := range pkt.IconParts {
+		icon.Parts[i] = GuildIconPart{
+			Index:    p.Index,
+			ID:       p.ID,
+			Size:     p.Size,
+			Rotation: p.Rotation,
+			PosX:     p.PosX,
+			PosY:     p.PosY,
+		}
+	}
+
+	guild.Icon = icon
+
+	err = guild.Save(s)
+
+	if err != nil {
+		doAckSimpleFail(s, pkt.AckHandle, make([]byte, 4))
+		return
+	}
+
+	doAckSimpleSucceed(s, pkt.AckHandle, make([]byte, 4))
+}

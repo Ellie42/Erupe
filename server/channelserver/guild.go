@@ -2,6 +2,8 @@ package channelserver
 
 import (
 	"database/sql"
+	"database/sql/driver"
+	"encoding/json"
 	"fmt"
 	"github.com/Andoryuuta/Erupe/common/stringsupport"
 	"github.com/jmoiron/sqlx"
@@ -33,6 +35,7 @@ type Guild struct {
 	Comment        string         `db:"comment"`
 	FestivalColour FestivalColour `db:"festival_colour"`
 	GuildHallType  uint16         `db:"guild_hall"`
+	Icon           *GuildIcon     `db:"icon"`
 
 	GuildLeader
 }
@@ -42,19 +45,48 @@ type GuildLeader struct {
 	LeaderName   string `db:"leader_name"`
 }
 
+type GuildIconPart struct {
+	Index    uint16
+	ID       uint16
+	Size     uint8
+	Rotation uint8
+	PosX     uint16
+	PosY     uint16
+}
+
+type GuildIcon struct {
+	Parts []GuildIconPart
+}
+
+func (gi *GuildIcon) Scan(val interface{}) (err error) {
+	switch v := val.(type) {
+	case []byte:
+		err = json.Unmarshal(v, &gi)
+	case string:
+		err = json.Unmarshal([]byte(v), &gi)
+	}
+
+	return
+}
+
+func (gi *GuildIcon) Value() (valuer driver.Value, err error) {
+	return json.Marshal(gi)
+}
+
 const guildInfoSelectQuery = `
 SELECT g.id,
        g.name,
        g.rp,
        created_at,
-       (
-           SELECT count(1) FROM guild_characters gc WHERE gc.guild_id = g.id AND gc.is_applicant = false
-       )             AS member_count,
        leader_id,
        lc.name as leader_name,
        comment,
        festival_colour,
-	   guild_hall
+	   guild_hall,
+       icon,
+       (
+           SELECT count(1) FROM guild_characters gc WHERE gc.guild_id = g.id AND gc.is_applicant = false
+       )             AS member_count
 FROM guilds g
          JOIN guild_characters lgc ON lgc.character_id = leader_id
          JOIN characters lc on leader_id = lc.id
@@ -62,8 +94,8 @@ FROM guilds g
 
 func (guild *Guild) Save(s *Session) error {
 	_, err := s.server.db.Exec(`
-		UPDATE guilds SET main_motto=$1, comment=$3, festival_colour=$4 WHERE id=$2
-	`, guild.MainMotto, guild.ID, guild.Comment, guild.FestivalColour)
+		UPDATE guilds SET main_motto=$1, comment=$3, festival_colour=$4, icon=$5 WHERE id=$2
+	`, guild.MainMotto, guild.ID, guild.Comment, guild.FestivalColour, guild.Icon)
 
 	if err != nil {
 		s.logger.Error("failed to update guild data", zap.Error(err), zap.Uint32("guildID", guild.ID))
