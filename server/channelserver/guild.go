@@ -28,7 +28,8 @@ var FestivalColourCodes = map[FestivalColour]uint8{
 type Guild struct {
 	ID             uint32         `db:"id"`
 	Name           string         `db:"name"`
-	MainMotto      string         `db:"main_motto"`
+	MainMotto      uint8          `db:"main_motto"`
+	SubMotto       uint8          `db:"sub_motto"`
 	CreatedAt      time.Time      `db:"created_at"`
 	MemberCount    uint16         `db:"member_count"`
 	RP             uint32         `db:"rp"`
@@ -77,6 +78,8 @@ const guildInfoSelectQuery = `
 SELECT g.id,
        g.name,
        g.rp,
+	   g.main_motto,
+	   g.sub_motto,
        created_at,
        leader_id,
        lc.name as leader_name,
@@ -94,8 +97,8 @@ FROM guilds g
 
 func (guild *Guild) Save(s *Session) error {
 	_, err := s.server.db.Exec(`
-		UPDATE guilds SET main_motto=$1, comment=$3, festival_colour=$4, icon=$5 WHERE id=$2
-	`, guild.MainMotto, guild.ID, guild.Comment, guild.FestivalColour, guild.Icon)
+		UPDATE guilds SET main_motto=$1, sub_motto=$6, comment=$3, festival_colour=$4, icon=$5 WHERE id=$2
+	`, guild.MainMotto, guild.ID, guild.Comment, guild.FestivalColour, guild.Icon, guild.SubMotto)
 
 	if err != nil {
 		s.logger.Error("failed to update guild data", zap.Error(err), zap.Uint32("guildID", guild.ID))

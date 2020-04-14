@@ -44,6 +44,13 @@ func handleMsgMhfOperateGuild(s *Session, p mhfpacket.MHFPacket) {
 		return
 	}
 
+	characterGuildInfo, err := GetCharacterGuildData(s, s.charID)
+
+	if err != nil {
+		doAckSimpleFail(s, pkt.AckHandle, make([]byte, 4))
+		return
+	}
+
 	bf := byteframe.NewByteFrame()
 
 	switch pkt.Action {
@@ -93,20 +100,18 @@ func handleMsgMhfOperateGuild(s *Session, p mhfpacket.MHFPacket) {
 	case mhfpacket.OPERATE_GUILD_SET_AVOID_LEADERSHIP_FALSE:
 		handleAvoidLeadershipUpdate(s, pkt, false)
 	case mhfpacket.OPERATE_GUILD_ACTION_UPDATE_COMMENT:
-		characterGuildInfo, err := GetCharacterGuildData(s, s.charID)
+		pbf := byteframe.NewByteFrameFromBytes(pkt.UnkData)
 
-		if err != nil || (!characterGuildInfo.IsLeader && !characterGuildInfo.IsSubLeader()) {
+		if !characterGuildInfo.IsLeader && !characterGuildInfo.IsSubLeader() {
 			doAckSimpleFail(s, pkt.AckHandle, make([]byte, 4))
 			return
 		}
 
-		pbf := byteframe.NewByteFrameFromBytes(pkt.UnkData)
-
-		mottoLength := pbf.ReadUint8()
+		commentLength := pbf.ReadUint8()
 		_ = pbf.ReadUint32()
 
 		guild.Comment, err = stringsupport.ConvertShiftJISToUTF8(
-			stripNullTerminator(string(pbf.ReadBytes(uint(mottoLength)))),
+			stripNullTerminator(string(pbf.ReadBytes(uint(commentLength)))),
 		)
 
 		if err != nil {
@@ -123,6 +128,21 @@ func handleMsgMhfOperateGuild(s *Session, p mhfpacket.MHFPacket) {
 		}
 
 		bf.WriteUint32(0x00)
+	case mhfpacket.OPERATE_GUILD_ACTION_UPDATE_MOTTO:
+		if !characterGuildInfo.IsLeader && !characterGuildInfo.IsSubLeader() {
+			doAckSimpleFail(s, pkt.AckHandle, make([]byte, 4))
+			return
+		}
+
+		guild.SubMotto = pkt.UnkData[3]
+		guild.MainMotto = pkt.UnkData[4]
+
+		err := guild.Save(s)
+
+		if err != nil {
+			doAckSimpleFail(s, pkt.AckHandle, make([]byte, 4))
+			return
+		}
 	default:
 		panic(fmt.Sprintf("unhandled operate guild action '%d'", pkt.Action))
 	}
@@ -302,8 +322,11 @@ func handleMsgMhfInfoGuild(s *Session, p mhfpacket.MHFPacket) {
 		bf.WriteUint16(guild.GuildHallType)
 		bf.WriteUint16(guild.MemberCount)
 
+		bf.WriteUint8(guild.MainMotto)
+		bf.WriteUint8(guild.SubMotto)
+
 		// Unk appears to be static
-		bf.WriteBytes([]byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
+		bf.WriteBytes([]byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
 
 		if characterGuildData == nil || characterGuildData.IsApplicant {
 			bf.WriteUint16(0x00)
