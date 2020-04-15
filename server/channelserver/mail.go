@@ -6,28 +6,34 @@ import (
 	"github.com/Andoryuuta/Erupe/network/mhfpacket"
 	"github.com/Andoryuuta/byteframe"
 	"go.uber.org/zap"
+	"time"
 )
 
 type Mail struct {
-	SenderID    uint32
-	RecipientID uint32
-	Subject     string
-	Body        string
-	Read        bool
+	ID                 int       `db:"id"`
+	SenderID           uint32    `db:"sender_id"`
+	RecipientID        uint32    `db:"recipient_id"`
+	Subject            string    `db:"subject"`
+	Body               string    `db:"body"`
+	Read               bool      `db:"read"`
+	AttachedItemID     *uint16   `db:"attached_item"`
+	AttachedItemAmount uint16    `db:"attached_item_amount"`
+	CreatedAt          time.Time `db:"created_at"`
+	SenderName         string    `db:"sender_name"`
 }
 
 func (m *Mail) Send(s *Session, transaction *sql.Tx) error {
 	query := `
-		INSERT INTO mail (sender_id, recipient_id, subject, body)
-		VALUES ($1, $2, $3, $4)
+		INSERT INTO mail (sender_id, recipient_id, subject, body, attached_item, attached_item_amount)
+		VALUES ($1, $2, $3, $4, $5, $6)
 	`
 
 	var err error
 
 	if transaction == nil {
-		_, err = s.server.db.Exec(query, m.SenderID, m.RecipientID, m.Subject, m.Body)
+		_, err = s.server.db.Exec(query, m.SenderID, m.RecipientID, m.Subject, m.Body, m.AttachedItemID, m.AttachedItemAmount)
 	} else {
-		_, err = transaction.Exec(query, m.SenderID, m.RecipientID, m.Subject, m.Body)
+		_, err = transaction.Exec(query, m.SenderID, m.RecipientID, m.Subject, m.Body, m.AttachedItemID, m.AttachedItemAmount)
 	}
 
 	if err != nil {
@@ -38,11 +44,54 @@ func (m *Mail) Send(s *Session, transaction *sql.Tx) error {
 			zap.Uint32("recipientID", m.RecipientID),
 			zap.String("subject", m.Subject),
 			zap.String("body", m.Body),
+			zap.Uint16p("itemID", m.AttachedItemID),
+			zap.Uint16("itemID", m.AttachedItemAmount),
 		)
 		return err
 	}
 
 	return nil
+}
+
+func GetMailListForCharacter(s *Session, charID uint32) ([]Mail, error) {
+	rows, err := s.server.db.Queryx(`
+		SELECT 
+			m.id,
+			m.sender_id,
+			m.recipient_id,
+			m.subject,
+			m.read,
+			m.attached_item,
+			m.attached_item_amount,
+			m.created_at,
+			c.name as sender_name
+		FROM mail m 
+			JOIN characters c ON c.id = m.sender_id 
+		WHERE recipient_id = $1
+	`, charID)
+
+	if err != nil {
+		s.logger.Error("failed to get mail for character", zap.Error(err), zap.Uint32("charID", charID))
+		return nil, err
+	}
+
+	defer rows.Close()
+
+	allMail := make([]Mail, 0)
+
+	for rows.Next() {
+		mail := Mail{}
+
+		err := rows.StructScan(&mail)
+
+		if err != nil {
+			return nil, err
+		}
+
+		allMail = append(allMail, mail)
+	}
+
+	return allMail, nil
 }
 
 func SendMailNotification(s *Session, m *Mail, recipient *Session) {

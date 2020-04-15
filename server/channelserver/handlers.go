@@ -1257,21 +1257,12 @@ func handleMsgMhfGetDistDescription(s *Session, p mhfpacket.MHFPacket) {
 	doAckBufSucceed(s, pkt.AckHandle, data)
 }
 
-func handleMsgMhfSendMail(s *Session, p mhfpacket.MHFPacket) {}
-
-func handleMsgMhfReadMail(s *Session, p mhfpacket.MHFPacket) {}
-
-func handleMsgMhfListMail(s *Session, p mhfpacket.MHFPacket) {}
-
-func handleMsgMhfOprtMail(s *Session, p mhfpacket.MHFPacket) {}
-
 func handleMsgMhfLoadFavoriteQuest(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfLoadFavoriteQuest)
 	// TODO(Andoryuuta): Save data from MsgMhfSaveFavoriteQuest and resend it here.
 	// Fist: Using a no favourites placeholder to avoid an in game error message
 	// being sent every time you use a counter when it fails to load
 	doAckBufSucceed(s, pkt.AckHandle, []byte{0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
-
 }
 
 func handleMsgMhfSaveFavoriteQuest(s *Session, p mhfpacket.MHFPacket) {
