@@ -5,7 +5,9 @@ import (
 	"encoding/hex"
 	"fmt"
 	"github.com/Andoryuuta/Erupe/common/stringsupport"
+	"io"
 	"sort"
+	"time"
 
 	"github.com/Andoryuuta/Erupe/network/mhfpacket"
 	"github.com/Andoryuuta/byteframe"
@@ -79,7 +81,13 @@ func handleMsgMhfOperateGuild(s *Session, p mhfpacket.MHFPacket) {
 			bf.WriteUint32(guild.LeaderCharID)
 		}
 	case mhfpacket.OPERATE_GUILD_ACTION_LEAVE:
-		err := guild.RemoveCharacter(s, s.charID)
+		var err error
+
+		if characterGuildInfo.IsApplicant {
+			err = guild.RejectApplication(s, s.charID)
+		} else {
+			err = guild.RemoveCharacter(s, s.charID)
+		}
 
 		response := 0x01
 
@@ -236,46 +244,58 @@ func handleOperateGuildActionDonate(s *Session, guild *Guild, pkt *mhfpacket.Msg
 func handleMsgMhfOperateGuildMember(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfOperateGuildMember)
 
-	sendResponse := func(success bool) {
-		if success {
-			doAckSimpleSucceed(s, pkt.AckHandle, nil)
-		} else {
-			doAckSimpleFail(s, pkt.AckHandle, nil)
-		}
-	}
-
 	guild, err := GetGuildInfoByCharacterId(s, pkt.CharID)
 
 	if err != nil || guild == nil {
-		sendResponse(false)
+		doAckSimpleFail(s, pkt.AckHandle, nil)
+		return
+		return
+	}
+
+	actorCharacter, err := GetCharacterGuildData(s, s.charID)
+
+	if err != nil || (!actorCharacter.IsSubLeader() && guild.LeaderCharID != s.charID) {
+		doAckSimpleFail(s, pkt.AckHandle, nil)
+		return
+	}
+
+	if pkt.Action == mhfpacket.OPERATE_GUILD_MEMBER_ACTION_ACCEPT || pkt.Action == mhfpacket.OPERATE_GUILD_MEMBER_ACTION_REJECT {
+		switch pkt.Action {
+		case mhfpacket.OPERATE_GUILD_MEMBER_ACTION_ACCEPT:
+			err = guild.AcceptApplication(s, pkt.CharID)
+		case mhfpacket.OPERATE_GUILD_MEMBER_ACTION_REJECT:
+			err = guild.RejectApplication(s, pkt.CharID)
+		}
+
+		if err != nil {
+			doAckSimpleFail(s, pkt.AckHandle, nil)
+		}
+
+		doAckSimpleSucceed(s, pkt.AckHandle, nil)
 		return
 	}
 
 	character, err := GetCharacterGuildData(s, pkt.CharID)
 
-	if err != nil || character == nil || (!character.IsSubLeader() && guild.LeaderCharID != s.charID) {
-		sendResponse(false)
+	if err != nil || character == nil {
+		doAckSimpleFail(s, pkt.AckHandle, nil)
 		return
 	}
 
 	switch pkt.Action {
-	case mhfpacket.OPERATE_GUILD_MEMBER_ACTION_ACCEPT:
-		err = guild.AcceptCharacter(s, pkt.CharID)
-	case mhfpacket.OPERATE_GUILD_MEMBER_ACTION_REJECT:
-		err = guild.RemoveCharacter(s, pkt.CharID)
 	case mhfpacket.OPERATE_GUILD_MEMBER_ACTION_KICK:
 		err = guild.RemoveCharacter(s, pkt.CharID)
 	default:
-		sendResponse(false)
+		doAckSimpleFail(s, pkt.AckHandle, nil)
 		panic(fmt.Sprintf("unhandled operateGuildMember action '%d'", pkt.Action))
 	}
 
 	if err != nil {
-		sendResponse(false)
+		doAckSimpleFail(s, pkt.AckHandle, nil)
 		return
 	}
 
-	sendResponse(true)
+	doAckSimpleSucceed(s, pkt.AckHandle, nil)
 }
 
 func handleMsgMhfInfoGuild(s *Session, p mhfpacket.MHFPacket) {
@@ -298,7 +318,7 @@ func handleMsgMhfInfoGuild(s *Session, p mhfpacket.MHFPacket) {
 
 		characterJoinedAt := uint32(0xFFFFFFFF)
 
-		if characterGuildData != nil {
+		if characterGuildData != nil && characterGuildData.JoinedAt != nil {
 			characterJoinedAt = uint32(characterGuildData.JoinedAt.Unix())
 		}
 
@@ -627,8 +647,65 @@ func handleMsgMhfAnswerGuildScout(s *Session, p mhfpacket.MHFPacket) {}
 func handleMsgMhfGetGuildScoutList(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfGetGuildScoutList)
 
-	// No scouting allowed
-	doAckSimpleSucceed(s, pkt.AckHandle, nil)
+	rows, err := s.server.db.Queryx(`
+		SELECT c.id, c.name
+			FROM characters c
+				LEFT JOIN guild_characters gc ON c.id = gc.character_id
+		WHERE c.restrict_guild_scout = false AND gc.guild_id IS null
+	`)
+
+	if err != nil {
+		s.logger.Error("failed to retrieve scouting characters", zap.Error(err))
+		doAckSimpleFail(s, pkt.AckHandle, nil)
+		return
+	}
+
+	defer rows.Close()
+
+	bf := byteframe.NewByteFrame()
+
+	bf.SetBE()
+
+	// Result count, we will overwrite this later
+	bf.WriteUint32(0x00)
+
+	count := uint32(0)
+
+	for rows.Next() {
+		var charName string
+		var charID uint32
+
+		err = rows.Scan(&charID, &charName)
+
+		if err != nil {
+			doAckSimpleFail(s, pkt.AckHandle, nil)
+			panic(err)
+		}
+
+		bf.WriteUint16(0x01) // Unk
+		bf.WriteUint16(0x4e8f)
+		bf.WriteUint32(charID) // Unk charID
+		bf.WriteUint32(charID)
+		bf.WriteUint32(uint32(time.Now().Unix()))
+		bf.WriteUint16(0x00) // HR?
+		bf.WriteUint16(0x00) // GR?
+
+		charNameBytes := []byte(stringsupport.MustConvertUTF8ToShiftJIS(charName) + "\x00")
+
+		bf.WriteBytes(charNameBytes)
+		bf.WriteBytes(make([]byte, 32-len(charNameBytes))) // Fixed length string
+		count++
+	}
+
+	_, err = bf.Seek(0, io.SeekStart)
+
+	if err != nil {
+		panic(err)
+	}
+
+	bf.WriteUint32(count)
+
+	doAckBufSucceed(s, pkt.AckHandle, bf.Data())
 }
 
 func handleMsgMhfGetGuildManageRight(s *Session, p mhfpacket.MHFPacket) {

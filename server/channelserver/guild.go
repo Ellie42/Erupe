@@ -88,7 +88,7 @@ SELECT g.id,
 	   guild_hall,
        icon,
        (
-           SELECT count(1) FROM guild_characters gc WHERE gc.guild_id = g.id AND gc.is_applicant = false
+           SELECT count(1) FROM guild_characters gc WHERE gc.guild_id = g.id
        )             AS member_count
 FROM guilds g
          JOIN guild_characters lgc ON lgc.character_id = leader_id
@@ -110,13 +110,13 @@ func (guild *Guild) Save(s *Session) error {
 
 func (guild *Guild) Apply(s *Session, charID uint32) error {
 	_, err := s.server.db.Exec(`
-		INSERT INTO guild_characters (guild_id, character_id, is_applicant, order_index)
-		VALUES ($1, $2, true, (SELECT MAX(order_index) + 1 FROM guild_characters WHERE guild_id = $1))
-	`, guild.ID, charID)
+		INSERT INTO guild_applications (guild_id, character_id, actor_id, application_type) 
+		VALUES ($1, $2, $3, 'applied')
+	`, guild.ID, charID, charID)
 
 	if err != nil {
 		s.logger.Error(
-			"failed to add applicant to guild",
+			"failed to add guild application",
 			zap.Error(err),
 			zap.Uint32("guildID", guild.ID),
 			zap.Uint32("charID", charID),
@@ -180,11 +180,62 @@ func (guild *Guild) RemoveCharacter(s *Session, charID uint32) error {
 	return nil
 }
 
-func (guild *Guild) AcceptCharacter(s *Session, charID uint32) error {
-	_, err := s.server.db.Exec(`UPDATE guild_characters SET is_applicant = false WHERE character_id = $1`, charID)
+func (guild *Guild) AcceptApplication(s *Session, charID uint32) error {
+	transaction, err := s.server.db.Begin()
+
+	if err != nil {
+		s.logger.Error("failed to start db transaction", zap.Error(err))
+		return err
+	}
+
+	_, err = transaction.Exec(`DELETE FROM guild_applications WHERE character_id = $1`, charID)
 
 	if err != nil {
 		s.logger.Error("failed to accept character's guild application", zap.Error(err))
+		rollbackTransaction(s, transaction)
+		return err
+	}
+
+	_, err = transaction.Exec(`
+		INSERT INTO guild_characters (guild_id, character_id, order_index)
+		VALUES ($1, $2, (SELECT MAX(order_index) + 1 FROM guild_characters WHERE guild_id = $1))
+	`, guild.ID, charID)
+
+	if err != nil {
+		s.logger.Error(
+			"failed to add applicant to guild",
+			zap.Error(err),
+			zap.Uint32("guildID", guild.ID),
+			zap.Uint32("charID", charID),
+		)
+		rollbackTransaction(s, transaction)
+		return err
+	}
+
+	err = transaction.Commit()
+
+	if err != nil {
+		s.logger.Error("failed to commit db transaction", zap.Error(err))
+		rollbackTransaction(s, transaction)
+		return err
+	}
+
+	return nil
+}
+
+func (guild *Guild) RejectApplication(s *Session, charID uint32) error {
+	_, err := s.server.db.Exec(
+		`DELETE FROM guild_applications WHERE character_id = $1 AND guild_id = $2`,
+		charID, guild.ID,
+	)
+
+	if err != nil {
+		s.logger.Error(
+			"failed to reject guild application",
+			zap.Error(err),
+			zap.Uint32("guildID", guild.ID),
+			zap.Uint32("charID", charID),
+		)
 		return err
 	}
 
@@ -373,8 +424,19 @@ func GetGuildInfoByID(s *Session, guildID uint32) (*Guild, error) {
 func GetGuildInfoByCharacterId(s *Session, charID uint32) (*Guild, error) {
 	rows, err := s.server.db.Queryx(fmt.Sprintf(`
 		%s
-		 JOIN guild_characters gc
-			  ON g.id = gc.guild_id AND gc.character_id = $1
+		WHERE EXISTS(
+				SELECT 1
+				FROM guild_characters gc1
+				WHERE gc1.character_id = $1
+				  AND gc1.guild_id = g.id
+			)
+		   OR EXISTS(
+				SELECT 1
+				FROM guild_applications ga
+				WHERE ga.character_id = $1
+				  AND ga.guild_id = g.id
+				  AND ga.application_type = 'applied'
+			)
 		LIMIT 1
 	`, guildInfoSelectQuery), charID)
 
