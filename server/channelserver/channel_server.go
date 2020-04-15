@@ -212,7 +212,7 @@ func (s *Server) BroadcastChatMessage(message string) {
 
 	s.BroadcastMHF(&mhfpacket.MsgSysCastedBinary{
 		CharID:         0xFFFFFFFF,
-		Type1:          BinaryMessageTypeChat,
+		MessageType:    BinaryMessageTypeChat,
 		RawDataPayload: bf.Data(),
 	}, nil)
 }

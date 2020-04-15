@@ -11,9 +11,10 @@ import (
 
 // MSG_SYS_CAST[ED]_BINARY types enum
 const (
-	BinaryMessageTypeState = 0
-	BinaryMessageTypeChat  = 1
-	BinaryMessageTypeEmote = 6
+	BinaryMessageTypeState      = 0
+	BinaryMessageTypeChat       = 1
+	BinaryMessageTypeMailNotify = 4
+	BinaryMessageTypeEmote      = 6
 )
 
 // MSG_SYS_CAST[ED]_BINARY broadcast types enum
@@ -38,7 +39,7 @@ func sendServerChatMessage(s *Session, message string) {
 
 	castedBin := &mhfpacket.MsgSysCastedBinary{
 		CharID:         s.charID,
-		Type1:          BinaryMessageTypeChat,
+		MessageType:    BinaryMessageTypeChat,
 		RawDataPayload: bf.Data(),
 	}
 
@@ -51,7 +52,7 @@ func handleMsgSysCastBinary(s *Session, p mhfpacket.MHFPacket) {
 	// Parse out the real casted binary payload
 	var realPayload []byte
 	var msgBinTargeted *binpacket.MsgBinTargeted
-	if pkt.Type0 == BroadcastTypeTargeted {
+	if pkt.BroadcastType == BroadcastTypeTargeted {
 		bf := byteframe.NewByteFrameFromBytes(pkt.RawDataPayload)
 		msgBinTargeted = &binpacket.MsgBinTargeted{}
 		err := msgBinTargeted.Parse(bf)
@@ -69,13 +70,13 @@ func handleMsgSysCastBinary(s *Session, p mhfpacket.MHFPacket) {
 	// Make the response to forward to the other client(s).
 	resp := &mhfpacket.MsgSysCastedBinary{
 		CharID:         s.charID,
-		Type0:          pkt.Type0, // (The client never uses Type0 upon receiving)
-		Type1:          pkt.Type1,
+		BroadcastType:  pkt.BroadcastType, // (The client never uses Type0 upon receiving)
+		MessageType:    pkt.MessageType,
 		RawDataPayload: realPayload,
 	}
 
 	// Send to the proper recipients.
-	switch pkt.Type0 {
+	switch pkt.BroadcastType {
 	case BroadcastTypeWorld:
 		s.server.BroadcastMHF(resp, s)
 	case BroadcastTypeStage:
@@ -98,7 +99,7 @@ func handleMsgSysCastBinary(s *Session, p mhfpacket.MHFPacket) {
 	}
 
 	// Handle chat
-	if pkt.Type1 == BinaryMessageTypeChat {
+	if pkt.MessageType == BinaryMessageTypeChat {
 		bf := byteframe.NewByteFrameFromBytes(realPayload)
 
 		// IMPORTANT! Casted binary objects are sent _as they are in memory_,
@@ -134,7 +135,7 @@ func handleMsgSysCastBinary(s *Session, p mhfpacket.MHFPacket) {
 
 				s.QueueSendMHF(&mhfpacket.MsgSysCastedBinary{
 					CharID:         s.charID,
-					Type1:          BinaryMessageTypeState,
+					MessageType:    BinaryMessageTypeState,
 					RawDataPayload: payloadBytes,
 				})
 			}

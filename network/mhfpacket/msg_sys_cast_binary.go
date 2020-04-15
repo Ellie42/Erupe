@@ -9,8 +9,8 @@ import (
 type MsgSysCastBinary struct {
 	Unk0           uint16
 	Unk1           uint16
-	Type0          uint8
-	Type1          uint8
+	BroadcastType  uint8
+	MessageType    uint8
 	RawDataPayload []byte
 }
 
@@ -23,8 +23,8 @@ func (m *MsgSysCastBinary) Opcode() network.PacketID {
 func (m *MsgSysCastBinary) Parse(bf *byteframe.ByteFrame) error {
 	m.Unk0 = bf.ReadUint16()
 	m.Unk1 = bf.ReadUint16()
-	m.Type0 = bf.ReadUint8()
-	m.Type1 = bf.ReadUint8()
+	m.BroadcastType = bf.ReadUint8()
+	m.MessageType = bf.ReadUint8()
 	dataSize := bf.ReadUint16()
 	m.RawDataPayload = bf.ReadBytes(uint(dataSize))
 	return nil
