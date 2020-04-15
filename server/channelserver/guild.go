@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/Andoryuuta/Erupe/common/stringsupport"
 	"github.com/jmoiron/sqlx"
@@ -14,9 +15,9 @@ import (
 type FestivalColour string
 
 const (
-	FestivalColourNone = "none"
-	FestivalColourRed  = "red"
-	FestivalColourBlue = "blue"
+	FestivalColourNone FestivalColour = "none"
+	FestivalColourRed  FestivalColour = "red"
+	FestivalColourBlue FestivalColour = "blue"
 )
 
 var FestivalColourCodes = map[FestivalColour]uint8{
@@ -24,6 +25,13 @@ var FestivalColourCodes = map[FestivalColour]uint8{
 	FestivalColourRed:  0x01,
 	FestivalColourNone: 0xFF,
 }
+
+type GuildApplicationType string
+
+const (
+	GuildApplicationTypeApplied GuildApplicationType = "applied"
+	GuildApplicationTypeInvited GuildApplicationType = "invited"
+)
 
 type Guild struct {
 	ID             uint32         `db:"id"`
@@ -53,6 +61,15 @@ type GuildIconPart struct {
 	Rotation uint8
 	PosX     uint16
 	PosY     uint16
+}
+
+type GuildApplication struct {
+	ID              int                  `db:"id"`
+	GuildID         uint32               `db:"guild_id"`
+	CharID          uint32               `db:"character_id"`
+	ActorID         uint32               `db:"actor_id"`
+	ApplicationType GuildApplicationType `db:"application_type"`
+	CreatedAt       time.Time            `db:"created_at"`
 }
 
 type GuildIcon struct {
@@ -108,11 +125,11 @@ func (guild *Guild) Save(s *Session) error {
 	return nil
 }
 
-func (guild *Guild) Apply(s *Session, charID uint32) error {
+func (guild *Guild) CreateApplication(s *Session, charID uint32, applicationType GuildApplicationType) error {
 	_, err := s.server.db.Exec(`
 		INSERT INTO guild_applications (guild_id, character_id, actor_id, application_type) 
-		VALUES ($1, $2, $3, 'applied')
-	`, guild.ID, charID, charID)
+		VALUES ($1, $2, $3, $4)
+	`, guild.ID, charID, s.charID, applicationType)
 
 	if err != nil {
 		s.logger.Error(
@@ -223,9 +240,30 @@ func (guild *Guild) AcceptApplication(s *Session, charID uint32) error {
 	return nil
 }
 
+// This is relying on the fact that invitation ID is also character ID right now
+// if invitation ID changes, this will break.
+func (guild *Guild) CancelInvitation(s *Session, charID uint32) error {
+	_, err := s.server.db.Exec(
+		`DELETE FROM guild_applications WHERE character_id = $1 AND guild_id = $2 AND application_type = 'invited'`,
+		charID, guild.ID,
+	)
+
+	if err != nil {
+		s.logger.Error(
+			"failed to cancel guild invitation",
+			zap.Error(err),
+			zap.Uint32("guildID", guild.ID),
+			zap.Uint32("charID", charID),
+		)
+		return err
+	}
+
+	return nil
+}
+
 func (guild *Guild) RejectApplication(s *Session, charID uint32) error {
 	_, err := s.server.db.Exec(
-		`DELETE FROM guild_applications WHERE character_id = $1 AND guild_id = $2`,
+		`DELETE FROM guild_applications WHERE character_id = $1 AND guild_id = $2 AND application_type = 'applied'`,
 		charID, guild.ID,
 	)
 
@@ -294,6 +332,32 @@ func (guild *Guild) DonateRP(s *Session, rp uint16, transaction *sql.Tx) (err er
 	}
 
 	return nil
+}
+
+func (guild *Guild) GetApplicationForCharID(s *Session, charID uint32) (*GuildApplication, error) {
+	row := s.server.db.QueryRowx(`
+		SELECT * from guild_applications WHERE character_id = $1 AND guild_id = $2
+	`, charID, guild.ID)
+
+	application := &GuildApplication{}
+
+	err := row.StructScan(application)
+
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+
+	if err != nil {
+		s.logger.Error(
+			"failed to retrieve guild application for character",
+			zap.Error(err),
+			zap.Uint32("charID", charID),
+			zap.Uint32("guildID", guild.ID),
+		)
+		return nil, err
+	}
+
+	return application, nil
 }
 
 func CreateGuild(s *Session, guildName string) (int32, error) {

@@ -44,6 +44,11 @@ func (gm *GuildMember) Save(s *Session) error {
 	return nil
 }
 
+//TODO add the recruiter permission to this check when it exists
+func (gm *GuildMember) IsRecruiter() bool {
+	return gm.IsLeader || gm.IsSubLeader()
+}
+
 const guildMembersSelectSQL = `
 SELECT g.id                                           as guild_id,
        joined_at,
