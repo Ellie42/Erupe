@@ -35,5 +35,12 @@ func (m *MsgBinTargeted) Parse(bf *byteframe.ByteFrame) error {
 
 // Build builds a binary packet from the current data.
 func (m *MsgBinTargeted) Build(bf *byteframe.ByteFrame) error {
-	panic("Not implemented")
+	bf.WriteUint16(m.TargetCount)
+
+	for i := 0; i < int(m.TargetCount); i++ {
+		bf.WriteUint32(m.TargetCharIDs[i])
+	}
+
+	bf.WriteBytes(m.RawDataPayload)
+	return nil
 }

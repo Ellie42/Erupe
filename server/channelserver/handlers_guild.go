@@ -69,7 +69,7 @@ func handleMsgMhfOperateGuild(s *Session, p mhfpacket.MHFPacket) {
 
 		bf.WriteUint32(uint32(response))
 	case mhfpacket.OPERATE_GUILD_ACTION_APPLY:
-		err = guild.CreateApplication(s, s.charID, GuildApplicationTypeApplied)
+		err = guild.CreateApplication(s, s.charID, GuildApplicationTypeApplied, nil)
 
 		if err != nil {
 			// All successful acks return 0x01, assuming 0x00 is failure

@@ -43,14 +43,42 @@ func handleMsgMhfPostGuildScout(s *Session, p mhfpacket.MHFPacket) {
 		return
 	}
 
-	err = guildInfo.CreateApplication(s, pkt.CharID, GuildApplicationTypeInvited)
+	transaction, err := s.server.db.Begin()
+
+	if err != nil {
+		panic(err)
+	}
+
+	err = guildInfo.CreateApplication(s, pkt.CharID, GuildApplicationTypeInvited, transaction)
+
+	if err != nil {
+		rollbackTransaction(s, transaction)
+		doAckBufFail(s, pkt.AckHandle, nil)
+		panic(err)
+	}
+
+	mail := &Mail{
+		SenderID:    s.charID,
+		RecipientID: pkt.CharID,
+		Subject:     "Hello there",
+		Body:        "I am following you",
+	}
+
+	err = mail.Send(s, transaction)
+
+	if err != nil {
+		rollbackTransaction(s, transaction)
+		doAckBufFail(s, pkt.AckHandle, nil)
+		return
+	}
+
+	err = transaction.Commit()
 
 	if err != nil {
 		doAckBufFail(s, pkt.AckHandle, nil)
 		panic(err)
 	}
 
-	// Can also return 0 but both cases seem to be for success?
 	doAckBufSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
 }
 

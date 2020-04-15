@@ -125,11 +125,20 @@ func (guild *Guild) Save(s *Session) error {
 	return nil
 }
 
-func (guild *Guild) CreateApplication(s *Session, charID uint32, applicationType GuildApplicationType) error {
-	_, err := s.server.db.Exec(`
+func (guild *Guild) CreateApplication(s *Session, charID uint32, applicationType GuildApplicationType, transaction *sql.Tx) error {
+
+	sql := `
 		INSERT INTO guild_applications (guild_id, character_id, actor_id, application_type) 
 		VALUES ($1, $2, $3, $4)
-	`, guild.ID, charID, s.charID, applicationType)
+	`
+
+	var err error
+
+	if transaction == nil {
+		_, err = s.server.db.Exec(sql, guild.ID, charID, s.charID, applicationType)
+	} else {
+		_, err = transaction.Exec(sql, guild.ID, charID, s.charID, applicationType)
+	}
 
 	if err != nil {
 		s.logger.Error(

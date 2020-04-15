@@ -13,6 +13,7 @@ const (
 
 type CharacterSaveData struct {
 	CharID         uint32
+	Name           string
 	RP             uint16
 	IsNewCharacter bool
 
@@ -22,7 +23,7 @@ type CharacterSaveData struct {
 
 func GetCharacterSaveData(s *Session, charID uint32) (*CharacterSaveData, error) {
 	result, err := s.server.db.Query(
-		"SELECT id, savedata, is_new_character FROM characters WHERE id = $1",
+		"SELECT id, savedata, is_new_character, name FROM characters WHERE id = $1",
 		charID,
 	)
 
@@ -48,7 +49,7 @@ func GetCharacterSaveData(s *Session, charID uint32) (*CharacterSaveData, error)
 		return nil, err
 	}
 
-	err = result.Scan(&saveData.CharID, &compressedBaseSave, &saveData.IsNewCharacter)
+	err = result.Scan(&saveData.CharID, &compressedBaseSave, &saveData.IsNewCharacter, &saveData.Name)
 
 	if err != nil {
 		s.logger.Error(
