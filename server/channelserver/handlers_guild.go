@@ -647,15 +647,21 @@ func handleMsgMhfAnswerGuildScout(s *Session, p mhfpacket.MHFPacket) {}
 func handleMsgMhfGetGuildScoutList(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfGetGuildScoutList)
 
-	rows, err := s.server.db.Queryx(`
-		SELECT c.id, c.name
-			FROM characters c
-				LEFT JOIN guild_characters gc ON c.id = gc.character_id
-		WHERE c.restrict_guild_scout = false AND gc.guild_id IS null
-	`)
+	guildInfo, err := GetGuildInfoByCharacterId(s, s.charID)
 
 	if err != nil {
-		s.logger.Error("failed to retrieve scouting characters", zap.Error(err))
+		panic(err)
+	}
+
+	rows, err := s.server.db.Queryx(`
+		SELECT c.id, c.name
+			FROM guild_applications ga 
+			JOIN characters c ON c.id = ga.character_id
+		WHERE ga.guild_id = $1 AND ga.application_type = 'invited'
+	`, guildInfo.ID)
+
+	if err != nil {
+		s.logger.Error("failed to retrieve scouted characters", zap.Error(err))
 		doAckSimpleFail(s, pkt.AckHandle, nil)
 		return
 	}
