@@ -93,7 +93,7 @@ func handleMsgMhfListMail(s *Session, p mhfpacket.MHFPacket) {
 		msg.WriteBytes(senderNameBytes)
 
 		if itemAttached {
-			msg.WriteUint16(m.AttachedItemAmount)
+			msg.WriteInt16(m.AttachedItemAmount)
 			msg.WriteUint16(*m.AttachedItemID)
 		}
 	}
@@ -101,4 +101,25 @@ func handleMsgMhfListMail(s *Session, p mhfpacket.MHFPacket) {
 	doAckBufSucceed(s, pkt.AckHandle, msg.Data())
 }
 
-func handleMsgMhfOprtMail(s *Session, p mhfpacket.MHFPacket) {}
+func handleMsgMhfOprtMail(s *Session, p mhfpacket.MHFPacket) {
+	pkt := p.(*mhfpacket.MsgMhfOprtMail)
+
+	mail, err := GetMailByID(s, s.mailList[pkt.AccIndex])
+
+	if err != nil {
+		doAckSimpleFail(s, pkt.AckHandle, nil)
+		panic(err)
+	}
+
+	switch mhfpacket.OperateMailOperation(pkt.Operation) {
+	case mhfpacket.OperateMailOperationDelete:
+		err = mail.MarkDeleted(s)
+
+		if err != nil {
+			doAckSimpleFail(s, pkt.AckHandle, nil)
+			panic(err)
+		}
+	}
+
+	doAckSimpleSucceed(s, pkt.AckHandle, nil)
+}

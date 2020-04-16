@@ -11,8 +11,9 @@ CREATE TABLE mail
     attached_item          INT                DEFAULT NULL,
     attached_item_amount   INT       NOT NULL DEFAULT 1,
     is_guild_invite        BOOL      NOT NULL DEFAULT FALSE,
-    created_at             TIMESTAMP NOT NULL DEFAULT NOW()
+    created_at             TIMESTAMP NOT NULL DEFAULT NOW(),
+    deleted                BOOL      NOT NULL DEFAULT FALSE
 );
 
-CREATE INDEX mail_recipient_created_index ON mail (recipient_id, created_at DESC);
+CREATE INDEX mail_recipient_deleted_created_id_index ON mail (recipient_id, deleted, created_at DESC, id DESC);
 END;

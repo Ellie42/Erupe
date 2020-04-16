@@ -16,9 +16,10 @@ type Mail struct {
 	Subject              string    `db:"subject"`
 	Body                 string    `db:"body"`
 	Read                 bool      `db:"read"`
+	Deleted              bool      `db:"deleted"`
 	AttachedItemReceived bool      `db:"attached_item_received"`
 	AttachedItemID       *uint16   `db:"attached_item"`
-	AttachedItemAmount   uint16    `db:"attached_item_amount"`
+	AttachedItemAmount   int16     `db:"attached_item_amount"`
 	CreatedAt            time.Time `db:"created_at"`
 	IsGuildInvite        bool      `db:"is_guild_invite"`
 	SenderName           string    `db:"sender_name"`
@@ -47,7 +48,7 @@ func (m *Mail) Send(s *Session, transaction *sql.Tx) error {
 			zap.String("subject", m.Subject),
 			zap.String("body", m.Body),
 			zap.Uint16p("itemID", m.AttachedItemID),
-			zap.Uint16("itemID", m.AttachedItemAmount),
+			zap.Int16("itemAmount", m.AttachedItemAmount),
 			zap.Bool("isGuildInvite", m.IsGuildInvite),
 		)
 		return err
@@ -73,6 +74,23 @@ func (m *Mail) MarkRead(s *Session) error {
 	return nil
 }
 
+func (m *Mail) MarkDeleted(s *Session) error {
+	_, err := s.server.db.Exec(`
+		UPDATE mail SET deleted = true WHERE id = $1 
+	`, m.ID)
+
+	if err != nil {
+		s.logger.Error(
+			"failed to mark mail as deleted",
+			zap.Error(err),
+			zap.Int("mailID", m.ID),
+		)
+		return err
+	}
+
+	return nil
+}
+
 func GetMailListForCharacter(s *Session, charID uint32) ([]Mail, error) {
 	rows, err := s.server.db.Queryx(`
 		SELECT 
@@ -85,10 +103,11 @@ func GetMailListForCharacter(s *Session, charID uint32) ([]Mail, error) {
 			m.attached_item_amount,
 			m.created_at,
 			m.is_guild_invite,
+			m.deleted,
 			c.name as sender_name
 		FROM mail m 
 			JOIN characters c ON c.id = m.sender_id 
-		WHERE recipient_id = $1
+		WHERE recipient_id = $1 AND deleted = false
 		ORDER BY m.created_at DESC, id DESC
 		LIMIT 32
 	`, charID)
@@ -124,11 +143,13 @@ func GetMailByID(s *Session, ID int) (*Mail, error) {
 			m.sender_id,
 			m.recipient_id,
 			m.subject,
-			m.body,
 			m.read,
+			m.body,
 			m.attached_item,
 			m.attached_item_amount,
 			m.created_at,
+			m.is_guild_invite,
+			m.deleted,
 			c.name as sender_name
 		FROM mail m 
 			JOIN characters c ON c.id = m.sender_id 

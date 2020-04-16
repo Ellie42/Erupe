@@ -67,7 +67,7 @@ func handleMsgMhfPostGuildScout(s *Session, p mhfpacket.MHFPacket) {
 	mail := &Mail{
 		SenderID:    s.charID,
 		RecipientID: pkt.CharID,
-		Subject:     "Guild ヽ(・∀・)ﾉ",
+		Subject:     "Guild! ヽ(・∀・)ﾉ",
 		Body: fmt.Sprintf(
 			"%s has invited you to join the wonderful guild %s, do you accept this challenge?",
 			senderName,
@@ -156,6 +156,29 @@ func handleMsgMhfAnswerGuildScout(s *Session, p mhfpacket.MHFPacket) {
 	if err != nil {
 		doAckBufFail(s, pkt.AckHandle, make([]byte, 4))
 		return
+	}
+
+	senderName, err := getCharacterName(s, pkt.LeaderID)
+
+	if err != nil {
+		doAckSimpleFail(s, pkt.AckHandle, nil)
+		panic(err)
+	}
+
+	successMail := Mail{
+		SenderID:      pkt.LeaderID,
+		RecipientID:   s.charID,
+		Subject:       "Happy days!",
+		Body:          fmt.Sprintf("You successfully joined %s and should be proud of all you have accomplished.", guild.Name),
+		IsGuildInvite: false,
+		SenderName:    senderName,
+	}
+
+	err = successMail.Send(s, nil)
+
+	if err != nil {
+		doAckSimpleFail(s, pkt.AckHandle, nil)
+		panic(err)
 	}
 
 	doAckBufSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00, 0x0f, 0x42, 0x81, 0x7e})
