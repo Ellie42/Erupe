@@ -10,6 +10,7 @@ CREATE TABLE mail
     attached_item_received BOOL      NOT NULL DEFAULT FALSE,
     attached_item          INT                DEFAULT NULL,
     attached_item_amount   INT       NOT NULL DEFAULT 1,
+    is_guild_invite        BOOL      NOT NULL DEFAULT FALSE,
     created_at             TIMESTAMP NOT NULL DEFAULT NOW()
 );
 

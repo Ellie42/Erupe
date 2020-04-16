@@ -77,6 +77,14 @@ func handleMsgMhfListMail(s *Session, p mhfpacket.MHFPacket) {
 			flags |= 0x08
 		}
 
+		if m.IsGuildInvite {
+			// Guild Invite
+			flags |= 0x10
+
+			// System message?
+			flags |= 0x04
+		}
+
 		msg.WriteUint8(flags)
 		msg.WriteBool(itemAttached)
 		msg.WriteUint8(uint8(len(subjectBytes)))

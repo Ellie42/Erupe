@@ -1,6 +1,7 @@
 package channelserver
 
 import (
+	"fmt"
 	"github.com/Andoryuuta/Erupe/common/stringsupport"
 	"github.com/Andoryuuta/Erupe/network/mhfpacket"
 	"github.com/Andoryuuta/byteframe"
@@ -31,14 +32,14 @@ func handleMsgMhfPostGuildScout(s *Session, p mhfpacket.MHFPacket) {
 		panic(err)
 	}
 
-	characterApplication, err := guildInfo.GetApplicationForCharID(s, pkt.CharID)
+	hasApplication, err := guildInfo.HasApplicationForCharID(s, pkt.CharID)
 
 	if err != nil {
 		doAckBufFail(s, pkt.AckHandle, make([]byte, 4))
 		panic(err)
 	}
 
-	if characterApplication != nil {
+	if hasApplication {
 		doAckBufSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x04})
 		return
 	}
@@ -57,11 +58,22 @@ func handleMsgMhfPostGuildScout(s *Session, p mhfpacket.MHFPacket) {
 		panic(err)
 	}
 
+	senderName, err := getCharacterName(s, s.charID)
+
+	if err != nil {
+		panic(err)
+	}
+
 	mail := &Mail{
 		SenderID:    s.charID,
 		RecipientID: pkt.CharID,
-		Subject:     "Hello there",
-		Body:        "I am following you",
+		Subject:     "Guild ヽ(・∀・)ﾉ",
+		Body: fmt.Sprintf(
+			"%s has invited you to join the wonderful guild %s, do you accept this challenge?",
+			senderName,
+			guildInfo.Name,
+		),
+		IsGuildInvite: true,
 	}
 
 	err = mail.Send(s, transaction)
@@ -113,7 +125,41 @@ func handleMsgMhfCancelGuildScout(s *Session, p mhfpacket.MHFPacket) {
 	doAckBufSucceed(s, pkt.AckHandle, make([]byte, 4))
 }
 
-func handleMsgMhfAnswerGuildScout(s *Session, p mhfpacket.MHFPacket) {}
+func handleMsgMhfAnswerGuildScout(s *Session, p mhfpacket.MHFPacket) {
+	pkt := p.(*mhfpacket.MsgMhfAnswerGuildScout)
+
+	guild, err := GetGuildInfoByCharacterId(s, pkt.LeaderID)
+
+	if err != nil {
+		panic(err)
+	}
+
+	_, err = guild.GetApplicationForCharID(s, s.charID, GuildApplicationTypeInvited)
+
+	if err != nil {
+		s.logger.Warn(
+			"could not retrieve guild invitation",
+			zap.Error(err),
+			zap.Uint32("guildID", guild.ID),
+			zap.Uint32("charID", s.charID),
+		)
+		doAckBufFail(s, pkt.AckHandle, make([]byte, 4))
+		return
+	}
+
+	if pkt.Answer {
+		err = guild.AcceptApplication(s, s.charID)
+	} else {
+		err = guild.RejectApplication(s, s.charID)
+	}
+
+	if err != nil {
+		doAckBufFail(s, pkt.AckHandle, make([]byte, 4))
+		return
+	}
+
+	doAckBufSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00, 0x0f, 0x42, 0x81, 0x7e})
+}
 
 func handleMsgMhfGetGuildScoutList(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfGetGuildScoutList)

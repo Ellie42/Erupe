@@ -343,10 +343,10 @@ func (guild *Guild) DonateRP(s *Session, rp uint16, transaction *sql.Tx) (err er
 	return nil
 }
 
-func (guild *Guild) GetApplicationForCharID(s *Session, charID uint32) (*GuildApplication, error) {
+func (guild *Guild) GetApplicationForCharID(s *Session, charID uint32, applicationType GuildApplicationType) (*GuildApplication, error) {
 	row := s.server.db.QueryRowx(`
-		SELECT * from guild_applications WHERE character_id = $1 AND guild_id = $2
-	`, charID, guild.ID)
+		SELECT * from guild_applications WHERE character_id = $1 AND guild_id = $2 AND application_type = $3
+	`, charID, guild.ID, applicationType)
 
 	application := &GuildApplication{}
 
@@ -367,6 +367,32 @@ func (guild *Guild) GetApplicationForCharID(s *Session, charID uint32) (*GuildAp
 	}
 
 	return application, nil
+}
+
+func (guild *Guild) HasApplicationForCharID(s *Session, charID uint32) (bool, error) {
+	row := s.server.db.QueryRowx(`
+		SELECT 1 from guild_applications WHERE character_id = $1 AND guild_id = $2
+	`, charID, guild.ID)
+
+	num := 0
+
+	err := row.Scan(&num)
+
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+
+	if err != nil {
+		s.logger.Error(
+			"failed to retrieve guild applications for character",
+			zap.Error(err),
+			zap.Uint32("charID", charID),
+			zap.Uint32("guildID", guild.ID),
+		)
+		return false, err
+	}
+
+	return true, nil
 }
 
 func CreateGuild(s *Session, guildName string) (int32, error) {

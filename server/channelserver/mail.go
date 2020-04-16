@@ -20,21 +20,22 @@ type Mail struct {
 	AttachedItemID       *uint16   `db:"attached_item"`
 	AttachedItemAmount   uint16    `db:"attached_item_amount"`
 	CreatedAt            time.Time `db:"created_at"`
+	IsGuildInvite        bool      `db:"is_guild_invite"`
 	SenderName           string    `db:"sender_name"`
 }
 
 func (m *Mail) Send(s *Session, transaction *sql.Tx) error {
 	query := `
-		INSERT INTO mail (sender_id, recipient_id, subject, body, attached_item, attached_item_amount)
-		VALUES ($1, $2, $3, $4, $5, $6)
+		INSERT INTO mail (sender_id, recipient_id, subject, body, attached_item, attached_item_amount, is_guild_invite)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
 	`
 
 	var err error
 
 	if transaction == nil {
-		_, err = s.server.db.Exec(query, m.SenderID, m.RecipientID, m.Subject, m.Body, m.AttachedItemID, m.AttachedItemAmount)
+		_, err = s.server.db.Exec(query, m.SenderID, m.RecipientID, m.Subject, m.Body, m.AttachedItemID, m.AttachedItemAmount, m.IsGuildInvite)
 	} else {
-		_, err = transaction.Exec(query, m.SenderID, m.RecipientID, m.Subject, m.Body, m.AttachedItemID, m.AttachedItemAmount)
+		_, err = transaction.Exec(query, m.SenderID, m.RecipientID, m.Subject, m.Body, m.AttachedItemID, m.AttachedItemAmount, m.IsGuildInvite)
 	}
 
 	if err != nil {
@@ -47,6 +48,7 @@ func (m *Mail) Send(s *Session, transaction *sql.Tx) error {
 			zap.String("body", m.Body),
 			zap.Uint16p("itemID", m.AttachedItemID),
 			zap.Uint16("itemID", m.AttachedItemAmount),
+			zap.Bool("isGuildInvite", m.IsGuildInvite),
 		)
 		return err
 	}
@@ -82,6 +84,7 @@ func GetMailListForCharacter(s *Session, charID uint32) ([]Mail, error) {
 			m.attached_item,
 			m.attached_item_amount,
 			m.created_at,
+			m.is_guild_invite,
 			c.name as sender_name
 		FROM mail m 
 			JOIN characters c ON c.id = m.sender_id 
