@@ -485,6 +485,8 @@ func GetGuildInfoByID(s *Session, guildID uint32) (*Guild, error) {
 		return nil, err
 	}
 
+	defer rows.Close()
+
 	hasRow := rows.Next()
 
 	if !hasRow {
