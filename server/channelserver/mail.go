@@ -10,16 +10,17 @@ import (
 )
 
 type Mail struct {
-	ID                 int       `db:"id"`
-	SenderID           uint32    `db:"sender_id"`
-	RecipientID        uint32    `db:"recipient_id"`
-	Subject            string    `db:"subject"`
-	Body               string    `db:"body"`
-	Read               bool      `db:"read"`
-	AttachedItemID     *uint16   `db:"attached_item"`
-	AttachedItemAmount uint16    `db:"attached_item_amount"`
-	CreatedAt          time.Time `db:"created_at"`
-	SenderName         string    `db:"sender_name"`
+	ID                   int       `db:"id"`
+	SenderID             uint32    `db:"sender_id"`
+	RecipientID          uint32    `db:"recipient_id"`
+	Subject              string    `db:"subject"`
+	Body                 string    `db:"body"`
+	Read                 bool      `db:"read"`
+	AttachedItemReceived bool      `db:"attached_item_received"`
+	AttachedItemID       *uint16   `db:"attached_item"`
+	AttachedItemAmount   uint16    `db:"attached_item_amount"`
+	CreatedAt            time.Time `db:"created_at"`
+	SenderName           string    `db:"sender_name"`
 }
 
 func (m *Mail) Send(s *Session, transaction *sql.Tx) error {
@@ -53,6 +54,23 @@ func (m *Mail) Send(s *Session, transaction *sql.Tx) error {
 	return nil
 }
 
+func (m *Mail) MarkRead(s *Session) error {
+	_, err := s.server.db.Exec(`
+		UPDATE mail SET read = true WHERE id = $1 
+	`, m.ID)
+
+	if err != nil {
+		s.logger.Error(
+			"failed to mark mail as read",
+			zap.Error(err),
+			zap.Int("mailID", m.ID),
+		)
+		return err
+	}
+
+	return nil
+}
+
 func GetMailListForCharacter(s *Session, charID uint32) ([]Mail, error) {
 	rows, err := s.server.db.Queryx(`
 		SELECT 
@@ -68,6 +86,8 @@ func GetMailListForCharacter(s *Session, charID uint32) ([]Mail, error) {
 		FROM mail m 
 			JOIN characters c ON c.id = m.sender_id 
 		WHERE recipient_id = $1
+		ORDER BY m.created_at DESC, id DESC
+		LIMIT 32
 	`, charID)
 
 	if err != nil {
@@ -92,6 +112,41 @@ func GetMailListForCharacter(s *Session, charID uint32) ([]Mail, error) {
 	}
 
 	return allMail, nil
+}
+
+func GetMailByID(s *Session, ID int) (*Mail, error) {
+	row := s.server.db.QueryRowx(`
+		SELECT 
+			m.id,
+			m.sender_id,
+			m.recipient_id,
+			m.subject,
+			m.body,
+			m.read,
+			m.attached_item,
+			m.attached_item_amount,
+			m.created_at,
+			c.name as sender_name
+		FROM mail m 
+			JOIN characters c ON c.id = m.sender_id 
+		WHERE m.id = $1
+		LIMIT 1
+	`, ID)
+
+	mail := &Mail{}
+
+	err := row.StructScan(mail)
+
+	if err != nil {
+		s.logger.Error(
+			"failed to retrieve mail",
+			zap.Error(err),
+			zap.Int("mailID", ID),
+		)
+		return nil, err
+	}
+
+	return mail, nil
 }
 
 func SendMailNotification(s *Session, m *Mail, recipient *Session) {

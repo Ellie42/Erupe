@@ -31,6 +31,13 @@ type Session struct {
 
 	// A stack containing the stage movement history (push on enter/move, pop on back)
 	stageMoveStack *stringstack.StringStack
+
+	// Accumulated index used for identifying mail for a client
+	// I'm not certain why this is used, but since the client is sending it
+	// I want to rely on it for now as it might be important later.
+	mailAccIndex uint8
+	// Contains the mail list that maps accumulated indexes to mail IDs
+	mailList []int
 }
 
 // NewSession creates a new Session type.
